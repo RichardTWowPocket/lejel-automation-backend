@@ -9,10 +9,6 @@ export enum MediaType {
 export class SectionMediaDto {
   @IsString()
   @IsNotEmpty()
-  audioPath: string; // Path to audio file or base64/data URL
-
-  @IsString()
-  @IsNotEmpty()
   mediaPath: string; // Path to image/video file
 
   @IsEnum(MediaType)
@@ -20,15 +16,11 @@ export class SectionMediaDto {
 
   @IsNumber()
   @IsNotEmpty()
-  startTime: number; // Start time in seconds from transcription
+  startTime: number; // Start time in seconds from combined audio
 
   @IsNumber()
   @IsNotEmpty()
-  endTime: number; // End time in seconds from transcription
-
-  @IsOptional()
-  @IsString()
-  audioUrl?: string; // Optional: URL to download audio
+  endTime: number; // End time in seconds from combined audio
 
   @IsOptional()
   @IsString()
@@ -36,6 +28,10 @@ export class SectionMediaDto {
 }
 
 export class CombineMediaDto {
+  @IsString()
+  @IsNotEmpty()
+  audioPath: string; // Path to combined audio file
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => SectionMediaDto)

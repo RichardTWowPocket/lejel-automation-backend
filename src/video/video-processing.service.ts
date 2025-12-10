@@ -21,9 +21,10 @@ export class VideoProcessingService {
   }
 
   /**
-   * Combine multiple sections (audio + image/video) into a single output video
+   * Combine multiple sections (media + audio segments from combined audio) into a single output video
    */
   async combineMedia(
+    audioPath: string,
     sections: SectionMediaDto[],
     outputFormat: string = 'mp4',
     width: number = 1920,
@@ -34,6 +35,13 @@ export class VideoProcessingService {
       `combined_${Date.now()}.${outputFormat}`,
     );
 
+    // Verify combined audio file exists
+    if (!fs.existsSync(audioPath)) {
+      throw new BadRequestException(
+        `Combined audio file not found: ${audioPath}`,
+      );
+    }
+
     try {
       // Process each section and create video clips
       const clipPaths: string[] = [];
@@ -43,6 +51,7 @@ export class VideoProcessingService {
         this.logger.log(`Processing section ${i + 1}/${sections.length}`);
 
         const clipPath = await this.processSection(
+          audioPath,
           section,
           i,
           width,
@@ -70,9 +79,10 @@ export class VideoProcessingService {
   }
 
   /**
-   * Process a single section: combine audio with image/video
+   * Process a single section: extract audio segment from combined audio and combine with image/video
    */
   private async processSection(
+    combinedAudioPath: string,
     section: SectionMediaDto,
     index: number,
     width: number,
@@ -84,69 +94,127 @@ export class VideoProcessingService {
       `section_${index}_${Date.now()}.mp4`,
     );
 
-    // Verify files exist
-    if (!fs.existsSync(section.audioPath)) {
-      throw new BadRequestException(
-        `Audio file not found: ${section.audioPath}`,
-      );
-    }
-
+    // Verify media file exists
     if (!fs.existsSync(section.mediaPath)) {
       throw new BadRequestException(
         `Media file not found: ${section.mediaPath}`,
       );
     }
 
-    return new Promise((resolve, reject) => {
-      let command = ffmpeg();
+    // Extract audio segment from combined audio
+    const audioSegmentPath = path.join(
+      this.tempDir,
+      `audio_segment_${index}_${Date.now()}.mp3`,
+    );
 
-      if (section.mediaType === MediaType.IMAGE) {
-        // For images: create video from image with audio duration
-        command = command
-          .input(section.mediaPath)
-          .inputOptions(['-loop', '1', '-framerate', '1'])
-          .input(section.audioPath)
-          .videoCodec('libx264')
-          .audioCodec('aac')
-          .outputOptions([
-            `-t ${audioDuration}`, // Set duration to match audio
-            `-vf scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`, // Scale and pad to maintain aspect ratio
-            '-shortest', // Finish encoding when the shortest input stream ends
-            '-pix_fmt yuv420p', // Ensure compatibility
-          ]);
-      } else {
-        // For videos: trim video to match audio duration, replace audio with new audio
-        command = command
-          .input(section.mediaPath)
-          .inputOptions([`-t ${audioDuration}`]) // Trim video input to audio duration first
-          .input(section.audioPath)
-          .videoCodec('libx264')
-          .audioCodec('aac')
-          .outputOptions([
-            `-vf scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`, // Scale and pad
-            '-shortest', // Finish encoding when the shortest input stream ends (audio)
-            '-map 0:v:0', // Map first input's video stream
-            '-map 1:a:0', // Map second input's audio stream
-            '-pix_fmt yuv420p',
-          ]);
+    try {
+      // First, extract the audio segment from the combined audio
+      await this.extractAudioSegment(
+        combinedAudioPath,
+        section.startTime,
+        audioDuration,
+        audioSegmentPath,
+      );
+
+      // Then process the section with the extracted audio segment
+      return new Promise((resolve, reject) => {
+        let command = ffmpeg();
+
+        if (section.mediaType === MediaType.IMAGE) {
+          // For images: create video from image with audio duration
+          command = command
+            .input(section.mediaPath)
+            .inputOptions(['-loop', '1', '-framerate', '1'])
+            .input(audioSegmentPath)
+            .videoCodec('libx264')
+            .audioCodec('aac')
+            .outputOptions([
+              `-t ${audioDuration}`, // Set duration to match audio
+              `-vf scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`, // Scale and pad to maintain aspect ratio
+              '-shortest', // Finish encoding when the shortest input stream ends
+              '-pix_fmt yuv420p', // Ensure compatibility
+            ]);
+        } else {
+          // For videos: trim video to match audio duration, replace audio with extracted audio segment
+          command = command
+            .input(section.mediaPath)
+            .inputOptions([`-t ${audioDuration}`]) // Trim video input to audio duration first
+            .input(audioSegmentPath)
+            .videoCodec('libx264')
+            .audioCodec('aac')
+            .outputOptions([
+              `-vf scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`, // Scale and pad
+              '-shortest', // Finish encoding when the shortest input stream ends (audio)
+              '-map 0:v:0', // Map first input's video stream
+              '-map 1:a:0', // Map second input's audio stream
+              '-pix_fmt yuv420p',
+            ]);
+        }
+
+        command
+          .output(outputPath)
+          .on('start', (commandLine) => {
+            this.logger.debug(`FFmpeg command: ${commandLine}`);
+          })
+          .on('progress', (progress) => {
+            this.logger.debug(`Processing: ${JSON.stringify(progress)}`);
+          })
+          .on('end', () => {
+            this.logger.log(
+              `Section ${index} processed: ${outputPath} (${audioDuration}s)`,
+            );
+            // Cleanup extracted audio segment
+            if (fs.existsSync(audioSegmentPath)) {
+              fs.unlinkSync(audioSegmentPath);
+            }
+            resolve(outputPath);
+          })
+          .on('error', (error) => {
+            this.logger.error(`FFmpeg error for section ${index}: ${error.message}`);
+            // Cleanup extracted audio segment on error
+            if (fs.existsSync(audioSegmentPath)) {
+              fs.unlinkSync(audioSegmentPath);
+            }
+            reject(error);
+          })
+          .run();
+      });
+    } catch (error: any) {
+      // Cleanup extracted audio segment on error
+      if (fs.existsSync(audioSegmentPath)) {
+        fs.unlinkSync(audioSegmentPath);
       }
+      throw error;
+    }
+  }
 
-      command
+  /**
+   * Extract audio segment from combined audio file
+   */
+  private async extractAudioSegment(
+    audioPath: string,
+    startTime: number,
+    duration: number,
+    outputPath: string,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      ffmpeg()
+        .input(audioPath)
+        .inputOptions([
+          `-ss ${startTime}`, // Start time
+          `-t ${duration}`, // Duration
+        ])
+        .audioCodec('copy') // Copy codec for faster processing
         .output(outputPath)
         .on('start', (commandLine) => {
-          this.logger.debug(`FFmpeg command: ${commandLine}`);
-        })
-        .on('progress', (progress) => {
-          this.logger.debug(`Processing: ${JSON.stringify(progress)}`);
+          this.logger.debug(`Extracting audio segment: ${commandLine}`);
         })
         .on('end', () => {
-          this.logger.log(
-            `Section ${index} processed: ${outputPath} (${audioDuration}s)`,
-          );
-          resolve(outputPath);
+          this.logger.debug(`Audio segment extracted: ${outputPath}`);
+          resolve();
         })
         .on('error', (error) => {
-          this.logger.error(`FFmpeg error for section ${index}: ${error.message}`);
+          this.logger.error(`Failed to extract audio segment: ${error.message}`);
           reject(error);
         })
         .run();

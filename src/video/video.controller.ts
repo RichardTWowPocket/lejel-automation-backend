@@ -8,9 +8,10 @@ import {
   Logger,
   UseInterceptors,
   UploadedFile,
+  Req,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { Response } from 'express';
+import { Response, Request } from 'express';
 import { VideoProcessingService } from './video-processing.service';
 import { CombineMediaDto } from './dto/combine-media.dto';
 import { UploadMediaResponseDto } from './dto/upload-media.dto';
@@ -21,10 +22,16 @@ import * as multer from 'multer';
 @Controller('api')
 export class VideoController {
   private readonly logger = new Logger(VideoController.name);
+  private readonly publicMediaDir = path.join(process.cwd(), 'public', 'media');
 
   constructor(
     private readonly videoProcessingService: VideoProcessingService,
-  ) {}
+  ) {
+    // Ensure public/media directory exists
+    if (!fs.existsSync(this.publicMediaDir)) {
+      fs.mkdirSync(this.publicMediaDir, { recursive: true });
+    }
+  }
 
   @Post('combine-media')
   async combineMedia(
@@ -32,6 +39,10 @@ export class VideoController {
     @Res() res: Response,
   ) {
     try {
+      if (!combineMediaDto.audioPath) {
+        throw new BadRequestException('Combined audio path is required');
+      }
+
       if (!combineMediaDto.sections || combineMediaDto.sections.length === 0) {
         throw new BadRequestException(
           'At least one section is required',
@@ -39,11 +50,12 @@ export class VideoController {
       }
 
       this.logger.log(
-        `Processing ${combineMediaDto.sections.length} sections`,
+        `Processing ${combineMediaDto.sections.length} sections with combined audio: ${combineMediaDto.audioPath}`,
       );
 
       // Process and combine media
       const outputPath = await this.videoProcessingService.combineMedia(
+        combineMediaDto.audioPath,
         combineMediaDto.sections,
         combineMediaDto.outputFormat || 'mp4',
         combineMediaDto.width || 1920,
@@ -97,7 +109,13 @@ export class VideoController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: multer.diskStorage({
-        destination: './temp',
+        destination: (req, file, cb) => {
+          const publicMediaDir = path.join(process.cwd(), 'public', 'media');
+          if (!fs.existsSync(publicMediaDir)) {
+            fs.mkdirSync(publicMediaDir, { recursive: true });
+          }
+          cb(null, publicMediaDir);
+        },
         filename: (req, file, cb) => {
           const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
           cb(null, `${uniqueSuffix}${path.extname(file.originalname)}`);
@@ -108,6 +126,7 @@ export class VideoController {
   )
   async uploadMedia(
     @UploadedFile() file: Express.Multer.File,
+    @Req() req: Request,
   ): Promise<UploadMediaResponseDto> {
     if (!file) {
       throw new BadRequestException('File is required');
@@ -125,12 +144,21 @@ export class VideoController {
       throw new BadRequestException('Unsupported file type');
     }
 
+    // Generate public URL
+    const protocol = req.protocol || 'http';
+    const host = req.get('host') || 'localhost:3000';
+    const baseUrl = `${protocol}://${host}`;
+    const publicUrl = `${baseUrl}/media/${file.filename}`;
+
+    this.logger.log(`Media uploaded: ${file.filename} -> ${publicUrl}`);
+
     return {
       filePath: file.path,
       fileName: file.filename,
       fileSize: file.size,
       mimeType: file.mimetype,
       mediaType,
+      publicUrl,
     };
   }
 }
