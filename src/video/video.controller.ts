@@ -9,17 +9,20 @@ import {
   UseInterceptors,
   UploadedFile,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response, Request } from 'express';
 import { VideoProcessingService } from './video-processing.service';
 import { CombineMediaDto } from './dto/combine-media.dto';
 import { UploadMediaResponseDto } from './dto/upload-media.dto';
+import { ApiKeyGuard } from '../auth/api-key.guard';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as multer from 'multer';
 
 @Controller('api')
+@UseGuards(ApiKeyGuard)
 export class VideoController {
   private readonly logger = new Logger(VideoController.name);
   private readonly publicMediaDir = path.join(process.cwd(), 'public', 'media');

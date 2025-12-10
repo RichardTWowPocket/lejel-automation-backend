@@ -5,10 +5,12 @@ import {
   UploadedFile,
   Body,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { TranscriptionService } from './transcription.service';
 import { TranscribeAudioDto } from './dto/transcribe-audio.dto';
+import { ApiKeyGuard } from '../auth/api-key.guard';
 import * as multer from 'multer';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -59,6 +61,7 @@ const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCa
 };
 
 @Controller('api')
+@UseGuards(ApiKeyGuard)
 export class TranscriptionController {
   constructor(private readonly transcriptionService: TranscriptionService) {}
 
