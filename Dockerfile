@@ -18,6 +18,9 @@ RUN npm run build
 # Production stage
 FROM node:20-alpine
 
+# Install FFmpeg for video processing
+RUN apk add --no-cache ffmpeg
+
 WORKDIR /app
 
 # Install production dependencies only
