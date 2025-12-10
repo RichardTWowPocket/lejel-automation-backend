@@ -43,7 +43,8 @@ export class ContainerManagerService {
           this.logger.warn(`Container ${this.containerName} not found. Attempting to start via docker-compose...`);
           try {
             const { execSync } = require('child_process');
-            execSync(`cd /root/lejel-automation-backend && docker-compose up -d whisper-worker`, {
+            // whisper-worker is now a shared service - start it from shared directory
+            execSync(`cd /root/shared/whisper-worker && docker-compose up -d whisper-worker`, {
               stdio: 'pipe',
               timeout: 30000,
             });

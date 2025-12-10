@@ -5,8 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: lejel-backend
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:3002:3000"
+    # No ports exposed - only accessible via reverse proxy network
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -19,42 +18,20 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - lejel-network
-      - n8n-network
+      - shared-services-network  # For accessing shared whisper-worker
     # Removed depends_on - container will start on-demand
 
-  whisper-worker:
-    build:
-      context: ./whisper-worker
-      dockerfile: Dockerfile
-    container_name: whisper-worker
-    restart: "no"  # Changed from unless-stopped - will not auto-start, managed by backend
-    environment:
-      - WHISPER_MODEL=medium
-      - PORT=8000
-      - IDLE_TIMEOUT_MINUTES=3  # Shutdown after 3 minutes of inactivity
-    volumes:
-      - whisper-cache:/root/.cache/whisper
-      - /tmp/whisper:/tmp/whisper
-    networks:
-      - lejel-network
-    # Optional: limit resources for Whisper (CPU-intensive)
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 8G
-        reservations:
-          cpus: '2'
-          memory: 4G
+  # whisper-worker is now a shared service
+  # See /root/shared/whisper-worker/
 
 networks:
   lejel-network:
     driver: bridge
-  n8n-network:
+    name: lejel-network  # External name for reverse proxy access
+  shared-services-network:
     external: true
-    name: n8n-richard_n8n-network
+    name: shared-services-network  # For accessing shared whisper-worker
 
 volumes:
-  whisper-cache:
-    driver: local
+  # whisper-cache volume removed - now managed by shared service
 
