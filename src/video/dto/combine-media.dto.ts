@@ -14,23 +14,31 @@ export class SectionMediaDto {
   @IsEnum(MediaType)
   mediaType: MediaType;
 
+  @IsOptional()
   @IsNumber()
-  @IsNotEmpty()
-  startTime: number; // Start time in seconds from combined audio
+  startTime?: number; // Start time in seconds from combined audio (required if no audioPath)
 
+  @IsOptional()
   @IsNumber()
-  @IsNotEmpty()
-  endTime: number; // End time in seconds from combined audio
+  endTime?: number; // End time in seconds from combined audio (required if no audioPath)
 
   @IsOptional()
   @IsString()
   mediaUrl?: string; // Optional: URL to download media
+
+  @IsOptional()
+  @IsString()
+  audioPath?: string; // Optional: Path to audio file for this section (if provided, startTime/endTime not needed)
+
+  @IsOptional()
+  @IsString()
+  transcript?: string; // Optional: Transcript text for this section (generates subtitles)
 }
 
 export class CombineMediaDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  audioPath: string; // Path to combined audio file
+  audioPath?: string; // Path to combined audio file (optional if all sections have audioPath)
 
   @IsArray()
   @ValidateNested({ each: true })
@@ -48,5 +56,18 @@ export class CombineMediaDto {
   @IsOptional()
   @IsNumber()
   height?: number; // Output video height. Default: 1080
+
+  @IsOptional()
+  @IsString()
+  returnUrl?: string; // If "yes" or "true", return public URL instead of streaming file
+
+  @IsOptional()
+  useSubtitle?: string | boolean; // If "yes", "true", or true, generate and add subtitles to video
+
+  @IsOptional()
+  useSocialMediaSubtitle?: string | boolean; // If "yes", "true", or true, generate social media-style subtitles (3-6 words with highlighted current word)
+
+  @IsOptional()
+  asyncMode?: string | boolean; // If "yes", "true", or true, return job ID immediately and process in background
 }
 

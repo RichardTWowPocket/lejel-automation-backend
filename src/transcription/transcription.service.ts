@@ -34,6 +34,7 @@ export class TranscriptionService {
     audioFilePath: string,
     language?: string,
     responseFormat: string = 'verbose_json',
+    useWhisperTimestamp?: boolean,
   ): Promise<any> {
     // Check if file exists
     if (!fs.existsSync(audioFilePath)) {
@@ -53,6 +54,12 @@ export class TranscriptionService {
     
     formData.append('response_format', responseFormat);
     formData.append('model', 'medium');
+    
+    // VAD is disabled - word-level timestamps work without it and are faster
+    // The useWhisperTimestamp parameter is kept for API compatibility but doesn't enable VAD
+    if (useWhisperTimestamp === true) {
+      this.logger.log('Word-level timestamps enabled (VAD disabled for faster processing)');
+    }
 
     try {
       // Send request to Whisper worker service
@@ -91,6 +98,8 @@ export class TranscriptionService {
           
           retryFormData.append('response_format', responseFormat);
           retryFormData.append('model', 'medium');
+          
+          // VAD is disabled - word-level timestamps work without it
           
           // Retry the request
           const retryResponse = await this.axiosInstance.post(

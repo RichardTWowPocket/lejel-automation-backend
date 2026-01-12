@@ -44,6 +44,8 @@ whisper-cache/
 coverage/
 .nyc_output/
 
+public/media/
+
 
 
 

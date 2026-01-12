@@ -18,8 +18,13 @@ RUN npm run build
 # Production stage
 FROM node:20-alpine
 
-# Install FFmpeg for video processing
-RUN apk add --no-cache ffmpeg
+# Install FFmpeg and Korean fonts for subtitle rendering
+RUN apk add --no-cache ffmpeg fontconfig \
+    && apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
+    ttf-dejavu ttf-liberation ttf-opensans \
+    && apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
+    font-noto-cjk font-noto-emoji \
+    && fc-cache -fv
 
 WORKDIR /app
 

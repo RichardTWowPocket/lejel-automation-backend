@@ -86,6 +86,7 @@ export class TranscriptionController {
         audioFile.path,
         transcribeAudioDto.language,
         transcribeAudioDto.format || 'verbose_json',
+        transcribeAudioDto.useWhisperTimestamp,
       );
 
       // Clean up uploaded file

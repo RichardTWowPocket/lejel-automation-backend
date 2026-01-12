@@ -35,7 +35,16 @@ export class ContainerManagerService {
         } else {
           this.logger.debug(`Container ${this.containerName} is already running`);
           // Even if running, verify it's actually responding
-          await this.waitForContainerReady(container, 30); // Quick check
+          // Use a shorter timeout and don't fail if it times out - container is running
+          try {
+            await this.waitForContainerReady(container, 15); // Quick check with shorter timeout
+          } catch (error: any) {
+            // If health check times out but container is running, log warning and continue
+            // The container might be busy processing a request
+            this.logger.warn(
+              `Health check timeout for ${this.containerName}, but container is running. Proceeding anyway.`,
+            );
+          }
         }
       } catch (error: any) {
         if (error.statusCode === 404) {

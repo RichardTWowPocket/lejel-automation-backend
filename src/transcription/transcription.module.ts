@@ -6,6 +6,7 @@ import { ContainerManagerService } from './container-manager.service';
 @Module({
   controllers: [TranscriptionController],
   providers: [TranscriptionService, ContainerManagerService],
+  exports: [TranscriptionService],
 })
 export class TranscriptionModule {}
 
