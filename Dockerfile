@@ -35,6 +35,14 @@ RUN npm ci --omit=dev || npm install --production && npm cache clean --force
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist
 
+# Copy only hakgyoansim-jiugae font folder (not entire public folder)
+COPY --from=builder /app/public/hakgyoansim-jiugae ./public/hakgyoansim-jiugae
+
+# Install Hakgyoansim font for ASS subtitles
+RUN mkdir -p /usr/share/fonts/truetype/hakgyoansim \
+    && cp ./public/hakgyoansim-jiugae/*.ttf /usr/share/fonts/truetype/hakgyoansim/ \
+    && fc-cache -fv
+
 # Create temp directory for file uploads
 RUN mkdir -p ./temp
 

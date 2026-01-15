@@ -559,6 +559,7 @@ export class VideoProcessingService {
             finalOutputPath,
             width,
             height,
+            32,
             isSocialMediaMode, // Social media style if enabled
           );
           
@@ -773,6 +774,7 @@ export class VideoProcessingService {
                   sectionWithSubtitlesPath,
                   width,
                   height,
+                  undefined,
                   false, // Not social media style
                 );
                 
@@ -805,6 +807,7 @@ export class VideoProcessingService {
                 sectionWithSubtitlesPath,
                 width,
                 height,
+                32,
                 false, // Not social media style
               );
               
@@ -847,6 +850,7 @@ export class VideoProcessingService {
                   sectionWithSubtitlesPath,
                   width,
                   height,
+                  32,
                   false, // Not social media style
                 );
                 
@@ -1685,6 +1689,121 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   }
 
   /**
+   * Generate ASS file for headline overlay (top and/or bottom)
+   * Supports <br> for line breaks and <h>text</h> for highlights (red color)
+   */
+  private async generateHeadlineASS(
+    topHeadlineText: string | undefined,
+    bottomHeadlineText: string | undefined,
+    videoDuration: number,
+    width: number,
+    height: number,
+    tempDir: string,
+  ): Promise<string> {
+    const assFilePath = path.join(tempDir, `headline_${Date.now()}.ass`);
+    
+    // ASS header
+    let assContent = `[Script Info]
+Title: Headline Overlay
+ScriptType: v4.00+
+PlayResX: ${width}
+PlayResY: ${height}
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: TopWhite,Hakgyoansim Jiugae,120,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,0,8,50,50,150,1
+Style: TopRed,Hakgyoansim Jiugae,120,&H000000FF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,0,8,50,50,150,1
+Style: BottomWhite,Hakgyoansim Jiugae,100,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,0,2,50,50,150,1
+Style: BottomRed,Hakgyoansim Jiugae,100,&H000000FF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,0,2,50,50,150,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+
+    // Helper to format time for ASS (h:mm:ss.cc)
+    const formatTime = (seconds: number): string => {
+      const hours = Math.floor(seconds / 3600);
+      const mins = Math.floor((seconds % 3600) / 60);
+      const secs = Math.floor(seconds % 60);
+      const centiseconds = Math.floor((seconds % 1) * 100);
+      return `${hours}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${centiseconds.toString().padStart(2, '0')}`;
+    };
+
+    // Helper to parse text with <h>highlight</h> tags and convert to ASS format
+    // Returns inline style overrides for red highlights
+    const parseTextWithHighlight = (text: string): string => {
+      // Normalize spaces
+      const normalized = text.replace(/\s+/g, ' ').trim();
+      
+      let result = '';
+      const regex = /<h>(.*?)<\/h>/g;
+      let lastIndex = 0;
+      let match;
+
+      while ((match = regex.exec(normalized)) !== null) {
+        // Add normal text before highlight
+        if (match.index > lastIndex) {
+          const normalText = normalized.substring(lastIndex, match.index);
+          if (normalText) {
+            result += normalText;
+          }
+        }
+        // Add highlighted text with color override (red)
+        if (match[1]) {
+          result += `{\\c&H0000FF&}${match[1]}{\\c&HFFFFFF&}`;
+        }
+        lastIndex = regex.lastIndex;
+      }
+
+      // Add remaining normal text
+      if (lastIndex < normalized.length) {
+        const normalText = normalized.substring(lastIndex);
+        if (normalText) {
+          result += normalText;
+        }
+      }
+
+      return result || normalized;
+    };
+
+    const startTime = formatTime(0);
+    const endTime = formatTime(videoDuration);
+
+    // Add top headline
+    if (topHeadlineText) {
+      // Handle <br> or </br> tags for line breaks
+      const lines = topHeadlineText.replace(/<\/?br\s*\/?>/gi, '\n').split('\n').filter(l => l.trim());
+      
+      // Build multi-line text with \\N separators
+      const textLines = lines.map(line => parseTextWithHighlight(line));
+      const fullText = textLines.join('\\N');
+      
+      // Single Dialogue entry with multiple lines
+      assContent += `Dialogue: 0,${startTime},${endTime},TopWhite,,0,0,0,,${fullText}\n`;
+    }
+
+    // Add bottom headline
+    if (bottomHeadlineText) {
+      // Handle <br> or </br> tags for line breaks
+      const lines = bottomHeadlineText.replace(/<\/?br\s*\/?>/gi, '\n').split('\n').filter(l => l.trim());
+      
+      // Build multi-line text with \\N separators
+      const textLines = lines.map(line => parseTextWithHighlight(line));
+      const fullText = textLines.join('\\N');
+      
+      // Single Dialogue entry with multiple lines
+      assContent += `Dialogue: 0,${startTime},${endTime},BottomWhite,,0,0,0,,${fullText}\n`;
+    }
+
+    // Write ASS file
+    await fsPromises.writeFile(assFilePath, assContent, 'utf-8');
+    this.logger.log(`[generateHeadlineASS] ✅ Created headline ASS file: ${assFilePath}`);
+    this.logger.debug(`[generateHeadlineASS] ASS Content:\n${assContent}`);
+    
+    return assFilePath;
+  }
+
+  /**
    * Convert transcript into social media style short key words/phrases (from Ravid-Clipping)
    * Groups words into chunks based on maxWordsPerSubtitle
    */
@@ -2020,6 +2139,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     outputPath: string,
     width: number,
     height: number,
+    subtitleFontSize?: number,
     isSocialMediaStyle: boolean = false,
   ): Promise<void> {
     const subtitleType = isSocialMediaStyle ? 'ASS' : 'SRT';
@@ -2098,7 +2218,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     }
       
     this.logger.log(`[addSubtitlesToVideo] ✅ Subtitle file verified: ${subtitleFileContent.length} bytes`);
-    this.logger.debug(`[addSubtitlesToVideo] Subtitle content preview (first 500 chars): ${subtitleFileContent.substring(0, 500)}`);
+    this.logger.debug(`[addSubtitlesToVideo] Subtitle content preview (first 1500 chars): ${subtitleFileContent.substring(0, 1500)}`);
     
     // Count subtitle entries (for SRT format)
     if (!isSocialMediaStyle) {
@@ -2116,10 +2236,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     // FFmpeg subtitles filter with styling - FORCES re-encoding to burn in subtitles
     // Alignment=2 means bottom center
     // MarginV is margin from bottom in pixels
-    // Fontsize scales with video height
-    const fontSize = Math.max(24, Math.round(height / 40)); // Slightly larger font
+    // For regular SRT subtitles: use Noto Sans KR, font size 14, with black background box
+    const fontSize = subtitleFontSize ?? 14; // Allow caller override for layouts
     
-    this.logger.debug(`[addSubtitlesToVideo] Subtitle styling: marginV=${marginV}px, fontSize=${fontSize}px`);
+    this.logger.log(`[addSubtitlesToVideo] ===== DEBUG INFO =====`);
+    this.logger.log(`[addSubtitlesToVideo] Video dimensions: ${width}x${height}`);
+    this.logger.log(`[addSubtitlesToVideo] Subtitle styling: marginV=${marginV}px, fontSize=${fontSize}px`);
+    this.logger.log(`[addSubtitlesToVideo] Subtitle type: ${isSocialMediaStyle ? 'ASS (social media)' : 'SRT (regular)'}`);
+    
+    // Log subtitle file content preview for debugging
+    try {
+      const subtitleContentPreview = await fsPromises.readFile(subtitleFilePath, 'utf8');
+      const previewLines = subtitleContentPreview.split('\n').slice(0, 20).join('\n');
+      this.logger.log(`[addSubtitlesToVideo] Subtitle file preview (first 20 lines):\n${previewLines}`);
+      const subtitleLineCount = subtitleContentPreview.split('\n').length;
+      const subtitleEntryCount = (subtitleContentPreview.match(/^\d+$/gm) || []).length;
+      this.logger.log(`[addSubtitlesToVideo] Subtitle file stats: ${subtitleLineCount} lines, ${subtitleEntryCount} entries`);
+    } catch (err: any) {
+      this.logger.warn(`[addSubtitlesToVideo] Could not read subtitle file for preview: ${err.message}`);
+    }
     
     // Ensure output path is absolute and directory exists
     // Resolve relative to process.cwd() to ensure correct path
@@ -2147,25 +2282,71 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     this.logger.debug(`[addSubtitlesToVideo] Video file exists: ${videoFileExists}`);
     
     // Build the complete filter string - this BURNS subtitles into the video
-    // Escape colons and other special chars that might be in the path
-    let escapedSubtitlePath = absoluteSubtitlePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+    // Normalize path for FFmpeg (use forward slashes, escape special characters)
+    // FFmpeg ASS filter requires proper path escaping
+    let normalizedSubtitlePath = absoluteSubtitlePath.replace(/\\/g, '/');
     
-    // Use different filters for ASS vs SRT (like Ravid-Clipping)
+    // Verify ASS file content is valid before using it
+    try {
+      const assContent = await fsPromises.readFile(absoluteSubtitlePath, 'utf8');
+      if (!assContent.includes('[Script Info]') || !assContent.includes('[Events]')) {
+        this.logger.error(`[addSubtitlesToVideo] ❌ Invalid ASS file: missing required sections`);
+        throw new Error('Invalid ASS subtitle file format');
+      }
+      const dialogueCount = (assContent.match(/^Dialogue:/gm) || []).length;
+      this.logger.log(`[addSubtitlesToVideo] ASS file validation: ${dialogueCount} dialogue entries found`);
+      if (dialogueCount === 0) {
+        this.logger.warn(`[addSubtitlesToVideo] ⚠️ ASS file has no dialogue entries - subtitles may not appear`);
+      }
+    } catch (err: any) {
+      this.logger.error(`[addSubtitlesToVideo] ❌ Failed to validate ASS file: ${err.message}`);
+      throw new Error(`Invalid subtitle file: ${err.message}`);
+    }
+    
+    // Escape special characters for FFmpeg filter
+    // For ASS filter, the path needs to be properly escaped
+    // FFmpeg ASS filter syntax: ass=filename (no quotes needed if path is properly escaped)
+    // Escape special characters that might break the filter
+    let escapedSubtitlePath = normalizedSubtitlePath
+      .replace(/\\/g, '/')     // Normalize to forward slashes
+      .replace(/:/g, '\\:')    // Escape colons (important for Windows paths)
+      .replace(/\[/g, '\\[')   // Escape brackets
+      .replace(/\]/g, '\\]')   // Escape brackets
+      .replace(/'/g, "\\'")    // Escape single quotes
+      .replace(/ /g, '\\ ');   // Escape spaces
+    
+    // Use ASS filter for both social media and regular subtitles (ASS has better styling support)
     let filterString: string;
     if (isSocialMediaStyle) {
       // Use ASS filter for karaoke subtitles (like Ravid-Clipping)
-      this.logger.debug(`[addSubtitlesToVideo] Using ASS filter for karaoke subtitles`);
-      filterString = `ass='${escapedSubtitlePath}'`;
+      this.logger.log(`[addSubtitlesToVideo] Using ASS filter for karaoke subtitles`);
+      // Use single quotes around the path to handle spaces and special chars
+      filterString = `ass=${escapedSubtitlePath}`;
     } else {
-      // Use subtitles filter for regular SRT subtitles
-      this.logger.debug(`[addSubtitlesToVideo] Using subtitles filter for regular subtitles`);
-      filterString = `subtitles='${escapedSubtitlePath}'`;
+      // Use ASS filter for regular subtitles (plain style, no background)
+      // The ASS file already contains all styling (font, etc.) in its header
+      this.logger.log(`[addSubtitlesToVideo] Using ASS filter for regular subtitles (plain style)`);
+      this.logger.log(`[addSubtitlesToVideo] ASS file contains: Font=Noto Sans CJK KR, Size=14, Plain style (white text with thin outline/shadow for visibility), Word wrapping enabled`);
+      // Use single quotes around the path to handle spaces and special chars
+      filterString = `ass=${escapedSubtitlePath}`;
     }
     
-    this.logger.debug(`[addSubtitlesToVideo] Using subtitle filter: ${filterString}`);
-    this.logger.debug(`[addSubtitlesToVideo] Absolute subtitle path: ${absoluteSubtitlePath}`);
+    this.logger.log(`[addSubtitlesToVideo] Final subtitle filter: ${filterString}`);
+    this.logger.log(`[addSubtitlesToVideo] Absolute subtitle path: ${absoluteSubtitlePath}`);
+    this.logger.log(`[addSubtitlesToVideo] Normalized subtitle path: ${normalizedSubtitlePath}`);
+    this.logger.log(`[addSubtitlesToVideo] Escaped subtitle path: ${escapedSubtitlePath}`);
     const subtitleFileExists = await this.fileExists(absoluteSubtitlePath);
-    this.logger.debug(`[addSubtitlesToVideo] Subtitle file exists: ${subtitleFileExists}`);
+    this.logger.log(`[addSubtitlesToVideo] Subtitle file exists: ${subtitleFileExists}`);
+    if (subtitleFileExists) {
+      try {
+        const subtitleStats = await fsPromises.stat(absoluteSubtitlePath);
+        this.logger.log(`[addSubtitlesToVideo] Subtitle file size: ${subtitleStats.size} bytes`);
+      } catch (err: any) {
+        this.logger.warn(`[addSubtitlesToVideo] Could not get subtitle file stats: ${err.message}`);
+      }
+    } else {
+      throw new Error(`Subtitle file does not exist: ${absoluteSubtitlePath}`);
+    }
     
     // Get video duration first to preserve it
     const videoDuration = await this.getVideoDuration(absoluteVideoPath);
@@ -2174,8 +2355,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       const ffmpegCommand = ffmpeg()
         .input(absoluteVideoPath)
         .videoCodec('libx264') // Force re-encoding to burn in subtitles
-        .audioCodec('aac') // Re-encode audio to ensure compatibility
-        .videoFilters([filterString]) // Pass as array
+        .audioCodec('copy') // Copy audio to avoid re-encoding (faster and preserves quality)
+        .videoFilters(filterString) // Pass filter string directly (fluent-ffmpeg handles it)
         .outputOptions([
           `-t ${videoDuration}`, // Preserve exact input duration
           '-pix_fmt yuv420p',
@@ -2185,15 +2366,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           '-avoid_negative_ts', 'make_zero',
           '-fflags', '+genpts',
           '-vsync', 'cfr',
-          '-async', '1',
         ])
         .output(absoluteOutputPath);
       
       ffmpegCommand
         .on('start', (commandLine) => {
-          this.logger.debug(`FFmpeg command for burning subtitles: ${commandLine}`);
-          this.logger.debug(`Subtitle file path: ${absoluteSubtitlePath}`);
-          this.logger.debug(`Preserving video duration: ${videoDuration}s`);
+          this.logger.log(`[addSubtitlesToVideo] ===== FFMPEG COMMAND STARTED =====`);
+          this.logger.log(`[addSubtitlesToVideo] Complete FFmpeg command: ${commandLine}`);
+          this.logger.log(`[addSubtitlesToVideo] Input video: ${absoluteVideoPath}`);
+          this.logger.log(`[addSubtitlesToVideo] Subtitle file: ${absoluteSubtitlePath}`);
+          this.logger.log(`[addSubtitlesToVideo] Output video: ${absoluteOutputPath}`);
+          this.logger.log(`[addSubtitlesToVideo] Video dimensions: ${width}x${height}`);
+          this.logger.log(`[addSubtitlesToVideo] Video duration: ${videoDuration}s`);
+          this.logger.log(`[addSubtitlesToVideo] Filter string: ${filterString}`);
         })
         .on('progress', (progress) => {
           if (progress.percent) {
@@ -2229,8 +2414,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           }
           resolve();
         })
-        .on('error', async (error) => {
+        .on('error', async (error: any) => {
           this.logger.error(`[addSubtitlesToVideo] ❌ Failed to burn subtitles: ${error.message}`);
+          this.logger.error(`[addSubtitlesToVideo] Error details: ${JSON.stringify(error, null, 2)}`);
+          if (error.stderr) {
+            this.logger.error(`[addSubtitlesToVideo] FFmpeg stderr output:\n${error.stderr}`);
+          }
           this.logger.error(`[addSubtitlesToVideo] Subtitle file path: ${absoluteSubtitlePath}`);
           const subtitleExists = await this.fileExists(absoluteSubtitlePath);
           const videoExists = await this.fileExists(absoluteVideoPath);
@@ -2661,6 +2850,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         outputPath,
         videoWidth,
         videoHeight,
+        undefined,
         false, // Not social media style (this is for burnSubtitlesToVideo method)
       );
 
@@ -2784,6 +2974,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             sections.map(s => s.transcript),
             absoluteTempDir,
             logPrefix,
+            true, // useKaraokeStyle = true for social media
           );
           // Log ASS file path for debugging
           this.logger.debug(`${logPrefix} [combineMediasWithTranscripts] ASS file saved: ${subtitleFilePath}`);
@@ -2798,17 +2989,29 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             sections.map(s => s.transcript),
             logPrefix,
           );
-        } else if (useSubtitle) {
-          // Generate SRT with segment-level timestamps
-          const srtResult = await this.generateSRTFromTranscripts(
+          } else if (useSubtitle) {
+          // Generate ASS with word-level timestamps (same method as social media, but plain white/black style)
+          subtitleFilePath = await this.generateASSFromTranscripts(
             transcriptionResult,
             sections.map(s => s.transcript),
             absoluteTempDir,
             logPrefix,
+            false, // plainStyle = false means use plain white/black (not karaoke)
           );
-          subtitleFilePath = srtResult.filePath;
-          sectionTimings = srtResult.sectionTimings;
-        }
+          // Log ASS file path for debugging
+          this.logger.debug(`${logPrefix} [combineMediasWithTranscripts] ASS file saved: ${subtitleFilePath}`);
+          const subtitleExists = await this.fileExists(subtitleFilePath);
+          if (subtitleExists) {
+            const assStats = await fsPromises.stat(subtitleFilePath);
+            this.logger.debug(`${logPrefix} [combineMediasWithTranscripts] ASS file size: ${assStats.size} bytes`);
+          }
+          // Calculate section timings from ASS (first word to last word of each section)
+          sectionTimings = await this.calculateSectionTimingsFromWhisper(
+            transcriptionResult,
+            sections.map(s => s.transcript),
+            logPrefix,
+          );
+          }
       } else {
         // No subtitles - skip Whisper transcription and use equal duration per section
         this.logger.log(`${logPrefix} [combineMediasWithTranscripts] Skipping Whisper transcription (subtitles disabled)`);
@@ -2874,6 +3077,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       // For vertical poster layout, force 9:16 aspect ratio
       let finalWidth = width;
       let finalHeight = height;
+      const subtitleFontSize = layout === 'vertical_poster' ? 42 : undefined;
       if (layout === 'vertical_poster') {
         finalWidth = 1080;
         finalHeight = 1920;
@@ -2938,6 +3142,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
               verticalGap || 24,
               inputRatio || '3:4',
               logPrefix,
+              true, // Skip headline rendering - will use ASS overlay instead
             );
           } else {
             await this.createVideoFromImage(resolvedImagePath, clipPath, timing.duration, finalWidth, finalHeight);
@@ -2958,18 +3163,70 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       const videoWithAudioPath = path.join(absoluteTempDir, `video_with_audio_${Date.now()}.${outputFormat}`);
       await this.addFullAudioTrack(combinedVideoPath, resolvedAudioPath, videoWithAudioPath, audioDuration);
 
+      // Step 6.5: Burn headline ASS if vertical poster layout and headlines exist
+      let videoAfterHeadline = videoWithAudioPath;
+      if (layout === 'vertical_poster' && (topHeadlineText || bottomHeadlineText)) {
+        this.logger.log(`${logPrefix} [combineMediasWithTranscripts] Step 6.5: Burning headline overlay (ASS)...`);
+        
+        // Determine which headline to show
+        const shouldShowBottomHeadline = bottomHeadlineText && (bottomHeadlineAppear === 'start' || bottomHeadlineAppear === 'last');
+        
+        const headlineAssPath = await this.generateHeadlineASS(
+          topHeadlineText,
+          shouldShowBottomHeadline ? bottomHeadlineText : undefined,
+          audioDuration,
+          finalWidth,
+          finalHeight,
+          absoluteTempDir,
+        );
+        
+        // Burn headline ASS
+        const videoWithHeadlinePath = path.join(absoluteTempDir, `video_with_headline_${Date.now()}.${outputFormat}`);
+        await new Promise<void>((resolve, reject) => {
+          ffmpeg(videoWithAudioPath)
+            .outputOptions([
+              `-vf ass=${headlineAssPath}`,
+              '-c:a copy', // Copy audio without re-encoding
+            ])
+            .output(videoWithHeadlinePath)
+            .on('start', (cmd) => {
+              this.logger.debug(`${logPrefix} [combineMediasWithTranscripts] Headline burn FFmpeg: ${cmd}`);
+            })
+            .on('end', () => {
+              this.logger.log(`${logPrefix} [combineMediasWithTranscripts] ✅ Headline overlay burned`);
+              resolve();
+            })
+            .on('error', (err) => {
+              this.logger.error(`${logPrefix} [combineMediasWithTranscripts] ❌ Failed to burn headline: ${err.message}`);
+              reject(err);
+            })
+            .run();
+        });
+        
+        videoAfterHeadline = videoWithHeadlinePath;
+        
+        // Cleanup headline ASS file
+        try {
+          await fsPromises.unlink(headlineAssPath);
+        } catch (err) {
+          this.logger.warn(`${logPrefix} [combineMediasWithTranscripts] Failed to cleanup headline ASS: ${err}`);
+        }
+      }
+
       // Step 7: Burn subtitles (if enabled)
       if (useSubtitle || useSocialMediaSubtitle) {
         this.logger.log(`${logPrefix} [combineMediasWithTranscripts] Step 7: Burning subtitles to video...`);
-        const videoDurationBeforeSubtitles = await this.getVideoDuration(videoWithAudioPath);
+        const videoDurationBeforeSubtitles = await this.getVideoDuration(videoAfterHeadline);
         this.logger.debug(`${logPrefix} [combineMediasWithTranscripts] Video duration before subtitles: ${videoDurationBeforeSubtitles}s (audio: ${audioDuration}s)`);
         
+        // Use finalWidth and finalHeight (which account for vertical_poster layout) for subtitle positioning
         await this.addSubtitlesToVideo(
-          videoWithAudioPath,
+          videoAfterHeadline,
           subtitleFilePath,
           outputPath,
-          width,
-          height,
+          finalWidth,
+          finalHeight,
+          subtitleFontSize,
           useSocialMediaSubtitle,
         );
         
@@ -2989,8 +3246,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           this.logger.debug(`${logPrefix} [combineMediasWithTranscripts] ✅ Final video duration verified: ${finalVideoDuration}s (audio: ${audioDuration}s, diff: ${durationDiff}s)`);
         }
       } else {
-        // No subtitles - just copy the video with audio
-        await fsPromises.copyFile(videoWithAudioPath, outputPath);
+        // No subtitles - just copy the video with audio (and headline if applied)
+        await fsPromises.copyFile(videoAfterHeadline, outputPath);
         
         // Verify final output duration matches audio
         const finalVideoDuration = await this.getVideoDuration(outputPath);
@@ -3051,7 +3308,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       this.clearDurationCache();
       this.clearPathCache();
       
-      this.logger.log(`${logPrefix} [combineMediasWithTranscripts] ===== WORKFLOW COMPLETED =====`);
+      this.logger.log(`${logPrefix} [combineMediasWithTranscripts] ===== WORKFLOW COMPLETED + UPDATED2 =====`);
       return outputPath;
     } catch (error: any) {
       this.logger.error(`${logPrefix} [combineMediasWithTranscripts] ❌ Error: ${error.message}`, error.stack);
@@ -3271,6 +3528,201 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     this.logger.log(`${logPrefix} [generateSRTFromTranscripts] ✅ SRT file created: ${srtFilePath} (${srtStats.size} bytes)`);
 
     return { filePath: srtFilePath, sectionTimings };
+  }
+
+  /**
+   * Generate regular ASS subtitles with black background box
+   * Uses the same word matching logic as SRT but outputs ASS format
+   */
+  private async generateRegularASSFromTranscripts(
+    whisperResult: any,
+    transcripts: string[],
+    tempDir: string,
+    logPrefix: string,
+    width: number,
+    height: number,
+  ): Promise<{ filePath: string; sectionTimings: Array<{ start: number; end: number; duration: number }> }> {
+    this.logger.log(`${logPrefix} [generateRegularASSFromTranscripts] ===== GENERATING REGULAR ASS WITH BLACK BACKGROUND =====`);
+    this.logger.log(`${logPrefix} [generateRegularASSFromTranscripts] Matching ${transcripts.length} transcript sections to whisper words...`);
+    
+    // Step 1: Combine all words from all segments into a single array (same as SRT)
+    const segments = whisperResult.segments || [];
+    this.logger.log(`${logPrefix} [generateRegularASSFromTranscripts] Total whisper segments: ${segments.length}`);
+    
+    const whisperWords: Array<{ word: string; start: number; end: number; segmentIndex: number }> = [];
+    
+    for (let segIdx = 0; segIdx < segments.length; segIdx++) {
+      const segment = segments[segIdx];
+      const words = segment.words || [];
+      
+      for (const wordInfo of words) {
+        const word = (wordInfo.text || wordInfo.word || '').trim();
+        if (word && word !== '[*]' && word.length > 0) {
+          whisperWords.push({
+            word: word,
+            start: wordInfo.start || segment.start || 0,
+            end: wordInfo.end || segment.end || 0,
+            segmentIndex: segIdx,
+          });
+        }
+      }
+    }
+    
+    this.logger.log(`${logPrefix} [generateRegularASSFromTranscripts] Combined ${whisperWords.length} words from ${segments.length} segments`);
+    
+    // Calculate subtitle position: 35% from bottom
+    const marginV = Math.round(height * 0.35);
+    // Add horizontal margins to prevent text from going off screen (10% on each side)
+    const marginL = Math.round(width * 0.10);
+    const marginR = Math.round(width * 0.10);
+    
+    // ASS header with plain styling (no background box, no outline)
+    let assContent = `[Script Info]
+Title: Plain Subtitles
+ScriptType: v4.00+
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Noto Sans CJK KR,14,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,${marginL},${marginR},${marginV},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+
+    const sectionTimings: Array<{ start: number; end: number; duration: number }> = [];
+    let availableWords = [...whisperWords];
+    let firstSectionOffset = 0;
+
+    // Process each transcript section (same logic as SRT)
+    for (let i = 0; i < transcripts.length; i++) {
+      const userTranscript = transcripts[i].trim();
+      this.logger.log(`${logPrefix} [generateRegularASSFromTranscripts] ===== Section ${i + 1} =====`);
+      this.logger.log(`${logPrefix} [generateRegularASSFromTranscripts] Section ${i + 1} user transcript: "${userTranscript}"`);
+      
+      const userWords = userTranscript.split(/\s+/).filter(w => w.length > 0);
+      
+      if (userWords.length === 0) {
+        this.logger.warn(`${logPrefix} [generateRegularASSFromTranscripts] ⚠️ Section ${i + 1}: Empty transcript, skipping`);
+        continue;
+      }
+      
+      // Find first word
+      let firstWordIndex = -1;
+      let firstWordStartTime = 0;
+      
+      if (i === 0) {
+        for (let wordIdx = 0; wordIdx < userWords.length; wordIdx++) {
+          const userWord = userWords[wordIdx];
+          const normalizedUserWord = this.normalizeWord(userWord);
+          
+          for (let j = 0; j < availableWords.length; j++) {
+            const whisperWord = availableWords[j];
+            const normalizedWhisperWord = this.normalizeWord(whisperWord.word);
+            
+            if (this.wordsMatch(normalizedUserWord, normalizedWhisperWord)) {
+              firstWordIndex = j;
+              firstWordStartTime = whisperWord.start;
+              break;
+            }
+          }
+          
+          if (firstWordIndex !== -1) break;
+        }
+        
+        if (firstWordIndex === -1) {
+          this.logger.warn(`${logPrefix} [generateRegularASSFromTranscripts] ⚠️ Section ${i + 1}: First word not found, using fallback`);
+          const prevEnd = i > 0 ? sectionTimings[i - 1].end : 0;
+          const estimatedDuration = 5;
+          sectionTimings.push({ start: prevEnd, end: prevEnd + estimatedDuration, duration: estimatedDuration });
+          
+          const startTimeStr = this.formatAssTime(prevEnd);
+          const endTimeStr = this.formatAssTime(prevEnd + estimatedDuration);
+          const escapedText = this.escapeTextForAss(userTranscript);
+          assContent += `Dialogue: 0,${startTimeStr},${endTimeStr},Default,,0,0,0,,{\\q2}${escapedText}\n`;
+          continue;
+        }
+      } else {
+        if (availableWords.length === 0) {
+          this.logger.warn(`${logPrefix} [generateRegularASSFromTranscripts] ⚠️ Section ${i + 1}: No available words left, using fallback`);
+          const prevEnd = sectionTimings[i - 1].end;
+          const estimatedDuration = 5;
+          sectionTimings.push({ start: prevEnd, end: prevEnd + estimatedDuration, duration: estimatedDuration });
+          
+          const startTimeStr = this.formatAssTime(prevEnd);
+          const endTimeStr = this.formatAssTime(prevEnd + estimatedDuration);
+          const escapedText = this.escapeTextForAss(userTranscript);
+          assContent += `Dialogue: 0,${startTimeStr},${endTimeStr},Default,,0,0,0,,{\\q2}${escapedText}\n`;
+          continue;
+        }
+        firstWordIndex = 0;
+        firstWordStartTime = availableWords[0].start;
+      }
+      
+      // Find last word
+      let lastWordIndex = -1;
+      let lastWordEndTime = 0;
+      
+      for (let wordIdx = userWords.length - 1; wordIdx >= 0; wordIdx--) {
+        const userWord = userWords[wordIdx];
+        const normalizedUserWord = this.normalizeWord(userWord);
+        
+        for (let j = firstWordIndex; j < availableWords.length; j++) {
+          const whisperWord = availableWords[j];
+          const normalizedWhisperWord = this.normalizeWord(whisperWord.word);
+          
+          if (this.wordsMatch(normalizedUserWord, normalizedWhisperWord)) {
+            lastWordIndex = j;
+            lastWordEndTime = whisperWord.end;
+            break;
+          }
+        }
+        
+        if (lastWordIndex !== -1) break;
+      }
+      
+      if (lastWordIndex === -1) {
+        lastWordIndex = firstWordIndex;
+        lastWordEndTime = availableWords[firstWordIndex].end;
+        this.logger.warn(`${logPrefix} [generateRegularASSFromTranscripts] Section ${i + 1}: Last word not found, using first word's end time`);
+      }
+      
+      // Get start and end times
+      let startTime = firstWordStartTime;
+      let endTime = lastWordEndTime;
+      
+      if (i === 0) {
+        firstSectionOffset = startTime;
+      }
+      
+      startTime = startTime - firstSectionOffset;
+      endTime = endTime - firstSectionOffset;
+      
+      const duration = endTime - startTime;
+      sectionTimings.push({ start: startTime, end: endTime, duration });
+      
+      // Generate ASS dialogue entry with word wrapping to prevent text from going off screen
+      const startTimeStr = this.formatAssTime(startTime);
+      const endTimeStr = this.formatAssTime(endTime);
+      const escapedText = this.escapeTextForAss(userTranscript);
+      // Add word wrapping tag (\q2 = word wrap) to ensure text stays within screen bounds
+      assContent += `Dialogue: 0,${startTimeStr},${endTimeStr},Default,,0,0,0,,{\\q2}${escapedText}\n`;
+      
+      // Remove matched words
+      if (lastWordIndex >= firstWordIndex) {
+        const removedCount = lastWordIndex - firstWordIndex + 1;
+        availableWords.splice(firstWordIndex, removedCount);
+      }
+    }
+
+    // Write ASS file
+    const assFilePath = path.join(tempDir, `transcripts_regular_ass_${Date.now()}.ass`);
+    const BOM = '\uFEFF';
+    await fsPromises.writeFile(assFilePath, BOM + assContent, 'utf8');
+    const assStats = await fsPromises.stat(assFilePath);
+    this.logger.log(`${logPrefix} [generateRegularASSFromTranscripts] ✅ ASS file created: ${assFilePath} (${assStats.size} bytes)`);
+    this.logger.log(`${logPrefix} [generateRegularASSFromTranscripts] Font: Noto Sans CJK KR, Size: 14, Plain style (white text with thin outline/shadow for visibility), Word wrapping enabled`);
+
+    return { filePath: assFilePath, sectionTimings };
   }
 
   /**
@@ -3576,20 +4028,36 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     transcripts: string[],
     tempDir: string,
     logPrefix: string,
+    useKaraokeStyle: boolean = true, // true = karaoke (social media), false = plain white/black
   ): Promise<string> {
     this.logger.log(`${logPrefix} [generateASSFromTranscripts] Generating ASS from ${transcripts.length} transcripts...`);
     
     const segments = whisperResult.segments || [];
     let currentSegmentIndex = 0; // Track which segments we've already used
     
-    // ASS header
+    // ASS header - use different styles based on useKaraokeStyle
+    const title = useKaraokeStyle ? 'Social Media Subtitles' : 'Plain Subtitles';
+    const fontName = 'Noto Sans CJK KR'; // Force CJK font for all subtitle styles
+    const fontSize = useKaraokeStyle ? '10' : '12'; // 10px for social media, 12px for plain
+    const primaryColor = useKaraokeStyle ? '&H00FFFF' : '&H00FFFFFF'; // Yellow for karaoke, White for plain
+    const secondaryColor = '&H00FFFFFF'; // White
+    const outlineColor = '&H00000000'; // Black
+    const backColor = useKaraokeStyle ? '&H80000000' : '&H80000000'; // Semi-transparent black for both styles
+    const bold = useKaraokeStyle ? '-1' : '0'; // Bold for karaoke, normal for plain
+    const borderStyle = useKaraokeStyle ? '1' : '3'; // Outline and drop shadow for karaoke, opaque box for plain
+    const outline = useKaraokeStyle ? '1' : '2'; // 1px for karaoke, 2px for plain (required for BorderStyle 3)
+    const shadow = useKaraokeStyle ? '0' : '0'; // No shadow for both styles
+    const marginV = useKaraokeStyle ? '80' : '80'; // 80px from bottom for both styles
+    const marginL = useKaraokeStyle ? '10' : '10'; // 10px for both styles
+    const marginR = useKaraokeStyle ? '10' : '10'; // 10px for both styles
+    
     let assContent = `[Script Info]
-Title: Social Media Subtitles
+Title: ${title}
 ScriptType: v4.00+
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,14,&H00FFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1,0,2,10,10,60,1
+Style: Default,${fontName},${fontSize},${primaryColor},${secondaryColor},${outlineColor},${backColor},${bold},0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},2,${marginL},${marginR},${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -3765,24 +4233,31 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         const startTime = firstWord.start;
         const endTime = lastWord.end;
         
-        // Build karaoke text with {\k} tags using USER's transcript words
-        let karaokeText = '';
-        for (let k = 0; k < chunkWords.length; k++) {
-          const word = chunkWords[k];
-          const wordDuration = word.end - word.start;
-          const highlightCs = Math.max(10, Math.round(wordDuration * 100)); // Convert to centiseconds
-          
-          karaokeText += `{\\k${highlightCs}}${this.escapeTextForAss(word.text)}`; // Use user's text, not Whisper's
-          if (k < chunkWords.length - 1) {
-            karaokeText += ' ';
+        // Build text - karaoke style with {\k} tags OR plain text
+        let subtitleText = '';
+        if (useKaraokeStyle) {
+          // Build karaoke text with {\k} tags using USER's transcript words
+          for (let k = 0; k < chunkWords.length; k++) {
+            const word = chunkWords[k];
+            const wordDuration = word.end - word.start;
+            const highlightCs = Math.max(10, Math.round(wordDuration * 100)); // Convert to centiseconds
+            
+            subtitleText += `{\\k${highlightCs}}${this.escapeTextForAss(word.text)}`; // Use user's text, not Whisper's
+            if (k < chunkWords.length - 1) {
+              subtitleText += ' ';
+            }
           }
+        } else {
+          // Plain text - just join words with spaces, add word wrapping
+          const plainText = chunkWords.map(w => this.escapeTextForAss(w.text)).join(' ');
+          subtitleText = `{\\q2}${plainText}`; // {\q2} = word wrapping
         }
 
         const startTimeStr = this.formatAssTime(startTime);
         const endTimeStr = this.formatAssTime(endTime);
         
-        this.logger.log(`${logPrefix} [generateASSFromTranscripts] Section ${i + 1} chunk ${Math.floor(j/3) + 1}: "${karaokeText}" (${startTimeStr} - ${endTimeStr})`);
-        assContent += `Dialogue: 0,${startTimeStr},${endTimeStr},Default,,0,0,0,,${karaokeText}\n`;
+        this.logger.log(`${logPrefix} [generateASSFromTranscripts] Section ${i + 1} chunk ${Math.floor(j/3) + 1}: "${subtitleText}" (${startTimeStr} - ${endTimeStr})`);
+        assContent += `Dialogue: 0,${startTimeStr},${endTimeStr},Default,,0,0,0,,${subtitleText}\n`;
       }
       
       // Remove matched words from availableWords array
@@ -4223,16 +4698,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     });
   }
 
-  /**
-   * Create vertical poster video with top/bottom headlines and centered image
-   * Positioning rules:
-   * - Image width = video width
-   * - Image height = video width * (4/3) for 3:4 or video width * 1 for 1:1
-   * - Image top = (video height - image height) / 2
-   * - Image bottom = image top + image height
-   * - Top headline Y = image top - gap - headline height (above image)
-   * - Bottom headline Y = image bottom + gap (below image)
-   */
   private async createVerticalPosterVideo(
     imagePath: string,
     outputPath: string,
@@ -4244,240 +4709,259 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     verticalGap: number = 24,
     inputRatio: string = '3:4',
     logPrefix: string = '',
+    skipHeadlineRendering: boolean = false, // NEW: Skip headline rendering (will use ASS instead)
   ): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       const fps = 30;
-      
-      // Parse input ratio (3:4 or 1:1)
-      let imageAspectRatio: number;
-      if (inputRatio === '1:1') {
-        imageAspectRatio = 1.0;
-      } else {
-        imageAspectRatio = 3 / 4; // 3:4
-      }
-      
-      // Calculate image dimensions according to rules:
-      // Image width = video width
-      // Image height = video width * aspect ratio
+
+      // Fixed layout for vertical poster:
+      // - Image area 1080x1440 positioned at y=240 on 1080x1920 canvas
       const imageWidth = canvasWidth;
-      const imageHeight = Math.round(canvasWidth * (1 / imageAspectRatio));
-      
-      // Calculate image position (vertically centered)
-      const imageTop = Math.round((canvasHeight - imageHeight) / 2);
-      const imageBottom = imageTop + imageHeight;
-      const imageX = 0; // Image starts at x=0 since width = canvas width
-      const imageY = imageTop;
-      
-      // Font sizes - larger and bold
-      const topHeadlineFontSize = 72; // Larger for top headline
-      const bottomHeadlineFontSize = 64; // Larger for bottom headline
-      const borderWidth = 4; // Slightly thicker outline for larger text
-      
-      // Use Open Sans Bold - more modern, social media-friendly font
-      // Fallback to Noto Sans CJK Bold for Korean/Chinese/Japanese if needed
-      const fontPath = '/usr/share/fonts/opensans/OpenSans-Bold.ttf';
+      const imageHeight = 1440;
+      const imageTop = 240;
+
+      const topHeadlineFontSize = 96;
+      const bottomHeadlineFontSize = 80;
+      const borderWidth = 5;
+      const lineHeight = 1.15;
+      // Increased padding from 200px (100px each side) to 120px each side for better spacing
+      const horizontalPadding = 120;
+      const textMaxWidth = canvasWidth - (horizontalPadding * 2);
+
+      // Use Hakgyoansim font for headlines
+      const projectFontPath = path.join(process.cwd(), 'public', 'hakgyoansim-jiugae', 'HakgyoansimJiugaeR.ttf');
+      const dockerFontPath = '/app/public/hakgyoansim-jiugae/HakgyoansimJiugaeR.ttf';
       const cjkFontPath = '/usr/share/fonts/noto/NotoSansCJK-Bold.ttc';
       
-      // Helper function to wrap text to fit within canvas width
-      // Estimates text width based on font size (rough approximation)
-      // For CJK characters: ~fontSize width per character
-      // For Latin: ~0.6 * fontSize width per character
-      const wrapTextToLines = (text: string, fontSize: number, maxWidth: number, maxLines: number = 2): string[] => {
-        const trimmedText = text.trim();
-        if (!trimmedText) return [];
+      // Prioritize Hakgyoansim font, fallback to CJK if not found
+      const headlineFontPath = [
+        projectFontPath,
+        dockerFontPath,
+        cjkFontPath,
+      ].find(p => fs.existsSync(p)) || cjkFontPath;
+
+      const wrapText = (text: string, fontSize: number, maxWidth: number, maxLines: number): string[] => {
+        const clean = text.trim();
+        if (!clean) return [];
         
-        // Check if text contains CJK characters
-        const hasCJK = /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(trimmedText);
-        const avgCharWidth = hasCJK ? fontSize * 0.9 : fontSize * 0.6; // CJK chars are wider
+        // For CJK (Korean, Chinese, Japanese), character width is approximately equal to font size
+        // For Latin characters, use 0.6x font size
+        const hasCJK = /[\u3131-\uD79D\uAC00-\uD7A3\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(clean);
+        const avgCharWidth = hasCJK ? fontSize * 0.95 : fontSize * 0.6;
+        const maxChars = Math.max(4, Math.floor(maxWidth / avgCharWidth));
         
-        const words = trimmedText.split(/\s+/).filter(w => w.length > 0);
-        
-        if (words.length === 0 || words.length === 1) {
-          // No spaces or single word - likely Korean/Chinese/Japanese, split by characters
-          const chars = trimmedText.split('');
-          const totalChars = chars.length;
-          const charsPerLine = Math.ceil(totalChars / maxLines);
-          const lines: string[] = [];
-          
-          for (let i = 0; i < maxLines; i++) {
-            const start = i * charsPerLine;
-            const end = Math.min(start + charsPerLine, totalChars);
-            if (start < totalChars) {
-              const line = chars.slice(start, end).join('');
-              if (line.length > 0) {
-                lines.push(line);
-              }
-            }
-          }
-          
-          return lines.length > 0 ? lines : [trimmedText];
-        }
-        
-        // Has multiple words - split by words intelligently
+        // For Korean text, split by spaces but also handle cases where we need to break within long phrases
+        const words = clean.split(/\s+/).filter(Boolean);
+
         const lines: string[] = [];
-        let currentLine = '';
-        let currentLineWidth = 0;
-        
-        for (let i = 0; i < words.length; i++) {
-          const word = words[i];
-          const wordWidth = word.length * avgCharWidth;
-          const spaceWidth = currentLine ? avgCharWidth * 0.3 : 0; // Space width
-          const testWidth = currentLineWidth + spaceWidth + wordWidth;
+        let current = '';
+        for (const word of words) {
+          const next = current ? `${current} ${word}` : word;
+          // Estimate width: count characters and multiply by avgCharWidth
+          const estimatedWidth = next.length * avgCharWidth;
           
-          if (testWidth <= maxWidth && lines.length < maxLines - 1) {
-            // Word fits on current line
-            currentLine = currentLine ? `${currentLine} ${word}` : word;
-            currentLineWidth = testWidth;
+          if (estimatedWidth <= maxWidth || current.length === 0) {
+            current = next;
           } else {
-            // Word doesn't fit - start new line
-            if (currentLine) {
-              lines.push(currentLine);
-            }
-            
-            // If this is the last available line, put all remaining words
+            lines.push(current);
+            current = word;
             if (lines.length >= maxLines - 1) {
-              const remainingWords = [word, ...words.slice(i + 1)];
-              if (remainingWords.length > 0) {
-                lines.push(remainingWords.join(' '));
-              }
               break;
             }
-            
-            // Start new line with current word
-            currentLine = word;
-            currentLineWidth = wordWidth;
           }
         }
-        
-        // Add remaining line if we haven't reached maxLines
-        if (currentLine && lines.length < maxLines) {
-          lines.push(currentLine);
+        if (current && lines.length < maxLines) {
+          lines.push(current);
         }
-        
-        // Ensure we have at least one line
-        if (lines.length === 0) {
-          lines.push(trimmedText);
-        }
-        
-        // If we have more than maxLines, combine excess into last line
+
+        if (lines.length === 0) return [clean];
         if (lines.length > maxLines) {
-          const combined = lines.slice(0, maxLines - 1);
-          combined.push(lines.slice(maxLines - 1).join(' '));
-          return combined;
+          return [...lines.slice(0, maxLines - 1), lines.slice(maxLines - 1).join(' ')];
         }
-        
         return lines;
       };
-      
-      // For top headline: ensure exactly 2 lines with proper wrapping
-      let topHeadlineLines: string[] = [];
-      let topHeadlineFinalText = '';
-      let topHeadlineY = 0;
-      
-      if (topHeadlineText) {
-        // Calculate available width (with some padding)
-        const availableWidth = canvasWidth - 40; // 20px padding on each side
+
+      // Process top headline (skip if using ASS overlay instead)
+      const topHeadlineLines: string[] = [];
+      if (!skipHeadlineRendering && topHeadlineText) {
+        // Handle <br> or </br> tags for manual line breaks
+        const textWithBreaks = topHeadlineText.replace(/<\/?br\s*\/?>/gi, '\n');
+        const manualLines = textWithBreaks.split('\n').filter(line => line.trim().length > 0);
         
-        // Wrap text to 2 lines
-        topHeadlineLines = wrapTextToLines(topHeadlineText, topHeadlineFontSize, availableWidth, 2);
-        
-        // Ensure we have exactly 2 lines
-        if (topHeadlineLines.length === 1) {
-          // If only 1 line, split it in half
-          const text = topHeadlineLines[0];
-          const midPoint = Math.ceil(text.length / 2);
-          topHeadlineLines = [
-            text.slice(0, midPoint),
-            text.slice(midPoint)
-          ];
-        } else if (topHeadlineLines.length > 2) {
-          // If more than 2 lines, combine excess into second line
-          topHeadlineLines = [
-            topHeadlineLines[0],
-            topHeadlineLines.slice(1).join(' ')
-          ];
+        // If manual line breaks exist, use them; otherwise use auto-wrapping
+        if (manualLines.length > 1) {
+          // Manual line breaks - respect user's formatting
+          topHeadlineLines.push(...manualLines.map(line => line.trim()));
+        } else {
+          // Auto-wrap if no manual breaks
+          topHeadlineLines.push(...wrapText(topHeadlineText, topHeadlineFontSize, textMaxWidth, 3));
         }
-        
-        // Join with newline for multi-line text
-        topHeadlineFinalText = topHeadlineLines.join('\\n');
-        
-        // Calculate height for exactly 2 lines
-        const lineHeight = topHeadlineFontSize * 1.4;
-        const topHeadlineHeight = Math.ceil(2 * lineHeight);
-        
-        // Calculate text positions according to rules:
-        // Top headline: image top - gap - headline height (above image)
-        // For baseline: we need to position from the bottom of the text
-        topHeadlineY = imageTop - verticalGap - topHeadlineHeight + topHeadlineFontSize; // Adjust for baseline
-        
-        this.logger.log(`${logPrefix} [createVerticalPosterVideo] Top headline wrapped to 2 lines: "${topHeadlineLines[0]}" | "${topHeadlineLines[1]}"`);
-        this.logger.log(`${logPrefix} [createVerticalPosterVideo] Top headline height: ${topHeadlineHeight}px, Y position: ${topHeadlineY}`);
       }
-      
-      // Calculate bottom headline height
-      const bottomLineHeight = bottomHeadlineFontSize * 1.4;
-      const bottomHeadlineHeight = bottomHeadlineText
-        ? Math.ceil((bottomHeadlineText.split('\n').length || 1) * bottomLineHeight)
-        : 0;
-      
-      // Bottom headline: image bottom + gap (below image)
-      // For baseline: position at imageBottom + gap + fontSize
-      const bottomHeadlineY = imageBottom + verticalGap + bottomHeadlineFontSize;
-      
-      this.logger.log(`${logPrefix} [createVerticalPosterVideo] Creating vertical poster: ${duration}s, ${canvasWidth}x${canvasHeight}`);
-      this.logger.log(`${logPrefix} [createVerticalPosterVideo] Input ratio: ${inputRatio}, Image size: ${imageWidth}x${imageHeight}`);
-      this.logger.log(`${logPrefix} [createVerticalPosterVideo] Image top: ${imageTop}, Image bottom: ${imageBottom}`);
-      this.logger.log(`${logPrefix} [createVerticalPosterVideo] Top headline font: ${topHeadlineFontSize}px (bold), Bottom headline font: ${bottomHeadlineFontSize}px (bold)`);
-      
-      // Build filter complex
+
+      // Process bottom headline (skip if using ASS overlay instead)
+      const bottomHeadlineLines: string[] = [];
+      if (!skipHeadlineRendering && bottomHeadlineText) {
+        // Handle <br> or </br> tags for manual line breaks
+        const textWithBreaks = bottomHeadlineText.replace(/<\/?br\s*\/?>/gi, '\n');
+        const manualLines = textWithBreaks.split('\n').filter(line => line.trim().length > 0);
+        
+        // If manual line breaks exist, use them; otherwise use auto-wrapping
+        if (manualLines.length > 1) {
+          // Manual line breaks - respect user's formatting
+          bottomHeadlineLines.push(...manualLines.map(line => line.trim()));
+        } else {
+          // Auto-wrap if no manual breaks
+          bottomHeadlineLines.push(...wrapText(bottomHeadlineText, bottomHeadlineFontSize, textMaxWidth, 3));
+        }
+      }
+
       const filters: string[] = [];
-      
-      // 1. Scale and pad image to fit desired size (width = canvas width)
       filters.push(`[0:v]scale=${imageWidth}:${imageHeight}:force_original_aspect_ratio=decrease,pad=${imageWidth}:${imageHeight}:(ow-iw)/2:(oh-ih)/2:black[img]`);
-      
-      // 2. Create black canvas and overlay image at calculated position
       filters.push(`color=black:size=${canvasWidth}x${canvasHeight}:duration=${duration}:rate=${fps}[bg]`);
-      filters.push(`[bg][img]overlay=${imageX}:${imageY}[v1]`);
-      
-      // 3. Draw top headline text (if provided) - white with black outline, bold, exactly 2 lines
+      filters.push(`[bg][img]overlay=0:${imageTop}[v1]`);
+
+      // Helper function to parse text with <h>...</h> highlight tags
+      const parseHighlightedText = (text: string): Array<{ text: string; isHighlight: boolean }> => {
+        // Normalize spaces first (collapse multiple spaces to single space)
+        const normalized = text.replace(/\s+/g, ' ').trim();
+        
+        const segments: Array<{ text: string; isHighlight: boolean }> = [];
+        const regex = /<h>(.*?)<\/h>/g;
+        let lastIndex = 0;
+        let match;
+
+        while ((match = regex.exec(normalized)) !== null) {
+          // Add normal text before the highlight
+          if (match.index > lastIndex) {
+            const normalText = normalized.substring(lastIndex, match.index);
+            if (normalText) {
+              segments.push({ text: normalText, isHighlight: false });
+            }
+          }
+          // Add highlighted text  
+          if (match[1]) {
+            segments.push({ text: match[1], isHighlight: true });
+          }
+          lastIndex = regex.lastIndex;
+        }
+
+        // Add remaining normal text
+        if (lastIndex < normalized.length) {
+          const normalText = normalized.substring(lastIndex);
+          if (normalText) {
+            segments.push({ text: normalText, isHighlight: false });
+          }
+        }
+
+        // If no segments found, return the whole text as normal
+        return segments.length > 0 ? segments : [{ text: normalized, isHighlight: false }];
+      };
+
+      // Helper: Create temp text file for drawtext textfile parameter
+      // This is the CORRECT way to handle any text (Korean, emojis, special chars, user input)
+      const createTextFile = async (text: string, identifier: string): Promise<string> => {
+        const textDir = path.join(this.tempDir, 'drawtext');
+        await this.ensureDir(textDir);
+        const textFilePath = path.join(textDir, `${identifier}_${Date.now()}.txt`);
+        await fsPromises.writeFile(textFilePath, text, 'utf-8');
+        return textFilePath;
+      };
+
+      // Helper function to estimate text width (approximation for centering)
+      const estimateTextWidth = (text: string, fontSize: number): number => {
+        const hasCJK = /[\u3131-\uD79D\uAC00-\uD7A3\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(text);
+        const avgCharWidth = hasCJK ? fontSize * 0.95 : fontSize * 0.6;
+        return text.length * avgCharWidth;
+      };
+
       let currentLabel = 'v1';
-      if (topHeadlineText && topHeadlineFinalText) {
-        // Escape text for FFmpeg drawtext (escape single quotes, colons, brackets, backslashes)
-        // Note: newlines are already escaped as \\n in topHeadlineFinalText
-        const topTextEscaped = topHeadlineFinalText
-          .replace(/\\/g, '\\\\')
-          .replace(/'/g, "\\'")
-          .replace(/:/g, "\\:")
-          .replace(/\[/g, "\\[")
-          .replace(/\]/g, "\\]");
-        // White text with black outline, bold font, larger size
-        // Use Open Sans for modern look, but check if text contains CJK characters and use CJK font if needed
-        const hasCJK = /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(topHeadlineText);
-        const topFontPath = hasCJK ? cjkFontPath : fontPath;
-        filters.push(`[${currentLabel}]drawtext=text='${topTextEscaped}':fontsize=${topHeadlineFontSize}:fontcolor=white:x=(w-text_w)/2:y=${topHeadlineY}:fontfile=${topFontPath}:bordercolor=black@1.0:borderw=${borderWidth}[toptext]`);
-        currentLabel = 'toptext';
+      // Adjust top headline Y position: if 2 lines, move up 90px for better spacing
+      const baseTopHeadlineY = 280;
+      const topHeadlineY = topHeadlineLines.length >= 2 ? baseTopHeadlineY - 90 : baseTopHeadlineY;
+      console.log('topHeadlineLines - 90');
+      console.log('topHeadlineY', topHeadlineY);
+      const bottomHeadlineY = 1560;
+      const topFontPath = headlineFontPath;
+      const bottomFontPath = headlineFontPath;
+
+      // Track text files for cleanup
+      const textFiles: string[] = [];
+
+      // Draw top headline - each line with highlight support
+      if (topHeadlineLines.length > 0) {
+        for (let i = 0; i < topHeadlineLines.length; i++) {
+          const line = topHeadlineLines[i];
+          const lineY = topHeadlineY + (i * topHeadlineFontSize * lineHeight);
+          const segments = parseHighlightedText(line);
+
+          // Calculate total line width for centering
+          const totalWidth = segments.reduce((sum, seg) => sum + estimateTextWidth(seg.text, topHeadlineFontSize), 0);
+          const startX = (canvasWidth - totalWidth) / 2;
+
+          // Render each segment
+          let cumulativeX = startX;
+          for (let segIndex = 0; segIndex < segments.length; segIndex++) {
+            const segment = segments[segIndex];
+            // 🚀 BULLETPROOF: Use textfile instead of inline text
+            const textFilePath = await createTextFile(segment.text, `top_${i}_${segIndex}`);
+            textFiles.push(textFilePath);
+            
+            const segmentColor = segment.isHighlight ? 'red' : 'white';
+            const segmentWidth = estimateTextWidth(segment.text, topHeadlineFontSize);
+            const isLastSegment = segIndex === segments.length - 1 && i === topHeadlineLines.length - 1;
+            const nextLabel = isLastSegment ? 'toptext' : `topline${i}_seg${segIndex}`;
+
+            // ✅ NO ESCAPING NEEDED - textfile handles everything!
+            filters.push(
+              `[${currentLabel}]drawtext=textfile=${textFilePath}:fontsize=${topHeadlineFontSize}:fontcolor=${segmentColor}:x=${cumulativeX}:y=${lineY}:fontfile=${topFontPath}:bordercolor=black@1.0:borderw=${borderWidth}[${nextLabel}]`
+            );
+            currentLabel = nextLabel;
+            cumulativeX += segmentWidth;
+          }
+        }
+      }
+
+      // Draw bottom headline - each line with highlight support
+      if (bottomHeadlineLines.length > 0) {
+        for (let i = 0; i < bottomHeadlineLines.length; i++) {
+          const line = bottomHeadlineLines[i];
+          const lineY = bottomHeadlineY + (i * bottomHeadlineFontSize * lineHeight);
+          const segments = parseHighlightedText(line);
+
+          // Calculate total line width for centering
+          const totalWidth = segments.reduce((sum, seg) => sum + estimateTextWidth(seg.text, bottomHeadlineFontSize), 0);
+          const startX = (canvasWidth - totalWidth) / 2;
+
+          // Render each segment
+          let cumulativeX = startX;
+          for (let segIndex = 0; segIndex < segments.length; segIndex++) {
+            const segment = segments[segIndex];
+            // 🚀 BULLETPROOF: Use textfile instead of inline text
+            const textFilePath = await createTextFile(segment.text, `bottom_${i}_${segIndex}`);
+            textFiles.push(textFilePath);
+            
+            const segmentColor = segment.isHighlight ? 'red' : 'white';
+            const segmentWidth = estimateTextWidth(segment.text, bottomHeadlineFontSize);
+            const isLastSegment = segIndex === segments.length - 1 && i === bottomHeadlineLines.length - 1;
+            const nextLabel = isLastSegment ? 'out' : `bottomline${i}_seg${segIndex}`;
+
+            // ✅ NO ESCAPING NEEDED - textfile handles everything!
+            filters.push(
+              `[${currentLabel}]drawtext=textfile=${textFilePath}:fontsize=${bottomHeadlineFontSize}:fontcolor=${segmentColor}:x=${cumulativeX}:y=${lineY}:fontfile=${bottomFontPath}:bordercolor=black@1.0:borderw=${borderWidth}[${nextLabel}]`
+            );
+            currentLabel = nextLabel;
+            cumulativeX += segmentWidth;
+          }
+        }
       }
       
-      // 4. Draw bottom headline text (if provided) - white with black outline, bold, larger
-      if (bottomHeadlineText) {
-        // Escape text for FFmpeg drawtext
-        const bottomTextEscaped = bottomHeadlineText
-          .replace(/\\/g, '\\\\')
-          .replace(/'/g, "\\'")
-          .replace(/:/g, "\\:")
-          .replace(/\[/g, "\\[")
-          .replace(/\]/g, "\\]");
-        // White text with black outline, bold font, larger size
-        // Use Open Sans for modern look, but check if text contains CJK characters and use CJK font if needed
-        const hasCJK = /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(bottomHeadlineText);
-        const bottomFontPath = hasCJK ? cjkFontPath : fontPath;
-        filters.push(`[${currentLabel}]drawtext=text='${bottomTextEscaped}':fontsize=${bottomHeadlineFontSize}:fontcolor=white:x=(w-text_w)/2:y=${bottomHeadlineY}:fontfile=${bottomFontPath}:bordercolor=black@1.0:borderw=${borderWidth}[out]`);
-      } else {
+      // If no headlines were drawn, ensure output label exists
+      if (currentLabel !== 'out') {
         filters.push(`[${currentLabel}]null[out]`);
       }
-      
+
       const filterComplex = filters.join(';');
-      
+
       ffmpeg()
         .input(imagePath)
         .inputOptions(['-loop', '1', '-framerate', `${fps}`])
@@ -4497,12 +4981,32 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         .on('start', (commandLine) => {
           this.logger.debug(`${logPrefix} [createVerticalPosterVideo] FFmpeg command: ${commandLine}`);
         })
-        .on('end', () => {
+        .on('end', async () => {
           this.logger.log(`${logPrefix} [createVerticalPosterVideo] ✅ Vertical poster video created: ${outputPath}`);
+          
+          // Cleanup text files
+          for (const textFile of textFiles) {
+            try {
+              await fsPromises.unlink(textFile);
+            } catch (err) {
+              this.logger.warn(`${logPrefix} [createVerticalPosterVideo] Failed to cleanup text file: ${textFile}`);
+            }
+          }
+          
           resolve();
         })
-        .on('error', (error) => {
+        .on('error', async (error) => {
           this.logger.error(`${logPrefix} [createVerticalPosterVideo] ❌ Error creating vertical poster: ${error.message}`);
+          
+          // Cleanup text files even on error
+          for (const textFile of textFiles) {
+            try {
+              await fsPromises.unlink(textFile);
+            } catch (err) {
+              // Silent cleanup on error
+            }
+          }
+          
           reject(error);
         })
         .run();
