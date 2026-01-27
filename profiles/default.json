@@ -1,0 +1,82 @@
+{
+  "profileId": "default",
+  "name": "Default Profile",
+  "description": "Default profile dengan konfigurasi standar untuk video processing",
+  "version": "1.0.0",
+  "createdAt": "2026-01-21",
+  
+  "config": {
+    "subtitle": {
+      "useSubtitle": true,
+      "useSocialMediaSubtitle": false,
+      "fontFamily": "Noto Sans CJK KR",
+      "fontSize": 48,
+      "fontFile": "/app/public/hakgyoansim-jiugae/HakgyoansimJiugaeR.ttf",
+      "primaryColor": "&H00FFFFFF&",
+      "outlineColor": "&H00000000&",
+      "backColor": "&H80000000&",
+      "outline": 5,
+      "shadow": 0,
+      "alignment": 2,
+      "marginL": 50,
+      "marginR": 50,
+      "marginV": 600,
+      "bold": false,
+      "italic": false,
+      "scaleX": 100,
+      "scaleY": 100
+    },
+    
+    "headline": {
+      "topHeadline": {
+        "fontFamily": "Hakgyoansim Jiugae",
+        "fontSize": 120,
+        "fontFile": "/app/public/hakgyoansim-jiugae/HakgyoansimJiugaeR.ttf",
+        "color": "white",
+        "highlightColor": "#FF0000",
+        "highlightColorASS": "&H0000FF&",
+        "borderColor": "black",
+        "borderWidth": 5,
+        "y": 280,
+        "alignment": 8,
+        "marginL": 50,
+        "marginR": 50,
+        "marginV": 150,
+        "bold": false,
+        "italic": false,
+        "lineHeight": 1.0
+      },
+      "bottomHeadline": {
+        "fontFamily": "Hakgyoansim Jiugae",
+        "fontSize": 100,
+        "fontFile": "/app/public/hakgyoansim-jiugae/HakgyoansimJiugaeR.ttf",
+        "color": "white",
+        "borderColor": "black",
+        "borderWidth": 5,
+        "alignment": 2,
+        "bold": false,
+        "italic": false
+      }
+    },
+    
+    "layout": {
+      "type": "default",
+      "canvasWidth": 1080,
+      "canvasHeight": 1920,
+      "imageWidth": 1080,
+      "imageHeight": 1920,
+      "imageTop": 0,
+      "imageAspect": "9:16",
+      "inputRatio": "9:16",
+      "verticalGap": 24
+    }
+  },
+  
+  "notes": {
+    "subtitle": "Menggunakan regular SRT subtitles (useSubtitle: true)",
+    "headline": "Top headline font size 120px dengan font Hakgyoansim Jiugae, bottom headline 100px. Support <h> tags untuk highlight dengan warna merah",
+    "layout": "Default layout dengan canvas 1080x1920",
+    "colors": "White untuk text normal, merah untuk highlight (<h> tags). Border black 5px",
+    "font": "Menggunakan Hakgyoansim Jiugae untuk headline, Noto Sans CJK KR untuk subtitle"
+  }
+}

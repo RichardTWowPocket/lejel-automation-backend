@@ -1,0 +1,79 @@
+{
+  "profileId": "saham_catatan",
+  "name": "Saham Catatan Profile - Vertical Poster with Hakgyoansim Jiugae Font",
+  "description": "Profile dengan useSubtitle, layout vertical_poster, headline dengan font Hakgyoansim Jiugae dan highlight warna cream #f2b783",
+  "version": "1.0.0",
+  "createdAt": "2026-01-21",
+  "config": {
+    "subtitle": {
+      "useSubtitle": true,
+      "useSocialMediaSubtitle": false,
+      "fontFamily": "Noto Sans CJK KR",
+      "fontSize": 36,
+      "fontFile": "/app/public/hakgyoansim-jiugae/HakgyoansimJiugaeR.ttf",
+      "primaryColor": "&H00FFFFFF&",
+      "outlineColor": "&H00000000&",
+      "backColor": "&H00000000&",
+      "borderStyle": 3,
+      "outline": 8,
+      "shadow": 0,
+      "alignment": 2,
+      "marginL": 50,
+      "marginR": 50,
+      "marginV": 500,
+      "bold": false,
+      "italic": false,
+      "scaleX": 100,
+      "scaleY": 100
+    },
+    "headline": {
+      "topHeadline": {
+        "fontFamily": "Hakgyoansim Jiugae",
+        "fontSize": 120,
+        "fontFile": "/app/public/hakgyoansim-jiugae/HakgyoansimJiugaeR.ttf",
+        "color": "white",
+        "highlightColor": "#f2b783",
+        "highlightColorASS": "&H83B7F2&",
+        "borderColor": "black",
+        "borderWidth": 5,
+        "y": 280,
+        "alignment": 8,
+        "marginL": 50,
+        "marginR": 50,
+        "marginV": 180,
+        "bold": false,
+        "italic": false,
+        "lineHeight": 0.75
+      },
+      "bottomHeadline": {
+        "fontFamily": "Hakgyoansim Jiugae",
+        "fontSize": 120,
+        "fontFile": "/app/public/hakgyoansim-jiugae/HakgyoansimJiugaeR.ttf",
+        "color": "white",
+        "borderColor": "black",
+        "borderWidth": 5,
+        "alignment": 2,
+        "bold": false,
+        "italic": false
+      }
+    },
+    "layout": {
+      "type": "vertical_poster",
+      "canvasWidth": 1080,
+      "canvasHeight": 1920,
+      "imageWidth": 1080,
+      "imageHeight": 1440,
+      "imageTop": 240,
+      "imageAspect": "3:4",
+      "inputRatio": "3:4",
+      "verticalGap": 24
+    }
+  },
+  "notes": {
+    "subtitle": "Menggunakan regular SRT subtitles (useSubtitle: true)",
+    "headline": "Top headline font size 173px dengan font Hakgyoansim Jiugae, bottom headline 120px. Support <h> tags untuk highlight dengan warna cream #f2b783",
+    "layout": "Vertical poster layout dengan canvas 1080x1920, image area 1080x1440 di posisi Y=240",
+    "colors": "White untuk text normal, cream #f2b783 untuk highlight (<h> tags). Border black 5px",
+    "font": "Menggunakan Hakgyoansim Jiugae untuk headline, Noto Sans CJK KR untuk subtitle"
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "profileId": "saham_labs",
+  "name": "Saham Labs Profile - Vertical Poster with Regular Subtitles",
+  "description": "Profile dengan useSubtitle, layout vertical_poster, headline dengan font Gasoek One dan highlight warna #2648ad",
+  "version": "1.0.0",
+  "createdAt": "2026-01-21",
+  "config": {
+    "subtitle": {
+      "useSubtitle": true,
+      "useSocialMediaSubtitle": false,
+      "fontFamily": "Noto Sans CJK KR",
+      "fontSize": 48,
+      "fontFile": "/app/public/hakgyoansim-jiugae/HakgyoansimJiugaeR.ttf",
+      "primaryColor": "&H00FFFFFF&",
+      "outlineColor": "&H00000000&",
+      "backColor": "&H80000000&",
+      "outline": 5,
+      "shadow": 0,
+      "alignment": 2,
+      "marginL": 50,
+      "marginR": 50,
+      "marginV": 600,
+      "bold": false,
+      "italic": false,
+      "scaleX": 100,
+      "scaleY": 100
+    },
+    "headline": {
+      "topHeadline": {
+        "fontFamily": "Gasoek One",
+        "fontSize": 120,
+        "fontFile": "/app/public/Gasoek_One/GasoekOne-Regular.ttf",
+        "color": "white",
+        "highlightColor": "#2648ad",
+        "highlightColorASS": "&HAD4826&",
+        "borderColor": "black",
+        "borderWidth": 5,
+        "y": 280,
+        "alignment": 8,
+        "marginL": 50,
+        "marginR": 50,
+        "marginV": 170,
+        "bold": false,
+        "italic": false,
+        "lineHeight": 0.75
+      },
+      "bottomHeadline": {
+        "fontFamily": "Gasoek One",
+        "fontSize": 120,
+        "fontFile": "/app/public/Gasoek_One/GasoekOne-Regular.ttf",
+        "color": "white",
+        "borderColor": "black",
+        "borderWidth": 5,
+        "alignment": 2,
+        "bold": false,
+        "italic": false
+      }
+    },
+    "layout": {
+      "type": "vertical_poster",
+      "canvasWidth": 1080,
+      "canvasHeight": 1920,
+      "imageWidth": 1080,
+      "imageHeight": 1440,
+      "imageTop": 240,
+      "imageAspect": "3:4",
+      "inputRatio": "3:4",
+      "verticalGap": 24
+    }
+  },
+  "notes": {
+    "subtitle": "Menggunakan regular SRT subtitles (useSubtitle: true)",
+    "headline": "Top headline font size 120px dengan font Gasoek One, bottom headline 100px. Support <h> tags untuk highlight dengan warna #2648ad",
+    "layout": "Vertical poster layout dengan canvas 1080x1920, image area 1080x1440 di posisi Y=240",
+    "colors": "White untuk text normal, #2648ad untuk highlight (<h> tags). Border black 5px",
+    "font": "Menggunakan Gasoek One untuk headline, Noto Sans CJK KR untuk subtitle"
+  }
+}

@@ -16,6 +16,7 @@ services:
     volumes:
       - ./temp:/app/temp
       - ./public/media:/app/public/media
+      - ./profiles:/app/profiles
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - lejel-network

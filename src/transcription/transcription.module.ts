@@ -1,14 +1,12 @@
 import { Module } from '@nestjs/common';
 import { TranscriptionController } from './transcription.controller';
 import { TranscriptionService } from './transcription.service';
-import { ContainerManagerService } from './container-manager.service';
+import { AssemblyAIModule } from '../assemblyai/assemblyai.module';
 
 @Module({
+  imports: [AssemblyAIModule],
   controllers: [TranscriptionController],
-  providers: [TranscriptionService, ContainerManagerService],
+  providers: [TranscriptionService],
   exports: [TranscriptionService],
 })
-export class TranscriptionModule {}
-
-
-
+export class TranscriptionModule { }

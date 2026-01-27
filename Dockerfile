@@ -1,54 +1,35 @@
-# Build stage
-FROM node:20-alpine AS builder
+FROM node:20-bullseye
+
+# Install FFmpeg, fontconfig, and Noto fonts (CJK for Korean, Color Emoji)
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    fontconfig \
+    fonts-noto-cjk \
+    fonts-noto-color-emoji \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Copy package files
-COPY package.json package-lock.json* ./
+COPY package*.json ./
 
 # Install dependencies
-RUN npm ci || npm install
+RUN npm install
 
-# Copy source code
+# Copy source code and assets (including local fonts in public/)
 COPY . .
+
+# Create directory for custom fonts and copy them
+RUN mkdir -p /usr/share/fonts/truetype/custom
+# Copy all fonts from public recursively (assuming they are in subdirectories)
+COPY public/ /usr/share/fonts/truetype/custom/
+
+# Refresh font cache
+RUN fc-cache -f -v
 
 # Build the application
 RUN npm run build
 
-# Production stage
-FROM node:20-alpine
-
-# Install FFmpeg and Korean fonts for subtitle rendering
-RUN apk add --no-cache ffmpeg fontconfig \
-    && apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
-    ttf-dejavu ttf-liberation ttf-opensans \
-    && apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
-    font-noto-cjk font-noto-emoji \
-    && fc-cache -fv
-
-WORKDIR /app
-
-# Install production dependencies only
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev || npm install --production && npm cache clean --force
-
-# Copy built application from builder
-COPY --from=builder /app/dist ./dist
-
-# Copy only hakgyoansim-jiugae font folder (not entire public folder)
-COPY --from=builder /app/public/hakgyoansim-jiugae ./public/hakgyoansim-jiugae
-
-# Install Hakgyoansim font for ASS subtitles
-RUN mkdir -p /usr/share/fonts/truetype/hakgyoansim \
-    && cp ./public/hakgyoansim-jiugae/*.ttf /usr/share/fonts/truetype/hakgyoansim/ \
-    && fc-cache -fv
-
-# Create temp directory for file uploads
-RUN mkdir -p ./temp
-
-# Expose port
 EXPOSE 3000
 
-# Start the application
-CMD ["node", "dist/main.js"]
-
+CMD ["npm", "run", "start:prod"]

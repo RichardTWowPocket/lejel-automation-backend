@@ -20,6 +20,7 @@ import { VideoProcessingService } from './video-processing.service';
 import { JobQueueService, JobStatus } from './job-queue.service';
 import { CombineMediaDto, SectionMediaDto, MediaType } from './dto/combine-media.dto';
 import { CombineMediasDto } from './dto/combine-medias.dto';
+import { CombineMediaProfileDto } from './dto/combine-media-profile.dto';
 import { UploadMediaRequestDto, UploadMediaResponseDto } from './dto/upload-media.dto';
 import { CombineWithSubtitlesDto } from './dto/combine-with-subtitles.dto';
 import { BurnSubtitlesDto } from './dto/burn-subtitles.dto';
@@ -54,7 +55,7 @@ export class VideoController {
     const requestId = `req_${Date.now()}_${Math.round(Math.random() * 1000)}`;
     this.logger.log(`[${requestId}] ========== /combine-media API CALL STARTED ==========`);
     this.logger.log(`[${requestId}] Request received with ${combineMediaDto.sections?.length || 0} sections`);
-    
+
     try {
       // Validate sections
       if (!combineMediaDto.sections || combineMediaDto.sections.length === 0) {
@@ -70,7 +71,7 @@ export class VideoController {
       for (let i = 0; i < combineMediaDto.sections.length; i++) {
         const section = combineMediaDto.sections[i];
         this.logger.debug(`[${requestId}] Validating section ${i + 1}: mediaPath=${section.mediaPath}, mediaType=${section.mediaType}, hasAudioPath=${!!section.audioPath}, hasTranscript=${!!section.transcript}`);
-        
+
         if (!section.audioPath) {
           if (section.startTime === undefined || section.endTime === undefined) {
             this.logger.error(`[${requestId}] Section ${i + 1} validation failed: Missing startTime/endTime`);
@@ -88,17 +89,17 @@ export class VideoController {
       }
 
       // Check if async mode is enabled
-      const asyncMode = combineMediaDto.asyncMode === 'yes' || 
-                        combineMediaDto.asyncMode === 'true';
-      
+      const asyncMode = combineMediaDto.asyncMode === 'yes' ||
+        combineMediaDto.asyncMode === 'true';
+
       if (asyncMode) {
         // Create job and return immediately
         const jobId = this.jobQueueService.createJob();
         this.logger.log(`[${requestId}] Async mode enabled, created job: ${jobId}`);
-        
+
         // Process in background (don't await)
         this.processCombineMediaAsync(jobId, combineMediaDto, req, requestId);
-        
+
         // Return job ID immediately
         return res.status(HttpStatus.ACCEPTED).json({
           jobId,
@@ -107,7 +108,7 @@ export class VideoController {
         });
       }
 
-      const audioSource = combineMediaDto.audioPath 
+      const audioSource = combineMediaDto.audioPath
         ? `combined audio: ${combineMediaDto.audioPath}`
         : 'per-section audio';
       this.logger.log(
@@ -115,18 +116,18 @@ export class VideoController {
       );
 
       // Check if subtitles should be used (handle both string and boolean)
-      const useSubtitle = combineMediaDto.useSubtitle === true || 
-                         combineMediaDto.useSubtitle === 'true' ||
-                         (typeof combineMediaDto.useSubtitle === 'string' && combineMediaDto.useSubtitle.toLowerCase() === 'yes');
+      const useSubtitle = combineMediaDto.useSubtitle === true ||
+        combineMediaDto.useSubtitle === 'true' ||
+        (typeof combineMediaDto.useSubtitle === 'string' && combineMediaDto.useSubtitle.toLowerCase() === 'yes');
 
       // Check if social media subtitles should be used (handle both string and boolean)
       const useSocialMediaSubtitle = combineMediaDto.useSocialMediaSubtitle === true ||
-                                     combineMediaDto.useSocialMediaSubtitle === 'true' ||
-                                     (typeof combineMediaDto.useSocialMediaSubtitle === 'string' && combineMediaDto.useSocialMediaSubtitle.toLowerCase() === 'yes');
-      
+        combineMediaDto.useSocialMediaSubtitle === 'true' ||
+        (typeof combineMediaDto.useSocialMediaSubtitle === 'string' && combineMediaDto.useSocialMediaSubtitle.toLowerCase() === 'yes');
+
       this.logger.log(`[${requestId}] Subtitle settings: useSubtitle=${useSubtitle}, useSocialMediaSubtitle=${useSocialMediaSubtitle}`);
       this.logger.log(`[${requestId}] Subtitle params: useSubtitle="${combineMediaDto.useSubtitle}", useSocialMediaSubtitle="${combineMediaDto.useSocialMediaSubtitle}"`);
-      
+
       // Log transcript status for each section
       let sectionsWithTranscripts = 0;
       for (let i = 0; i < combineMediaDto.sections.length; i++) {
@@ -159,20 +160,20 @@ export class VideoController {
         this.logger.error(`[${requestId}] Output file does not exist: ${outputPath}`);
         throw new BadRequestException('Output file was not created');
       }
-      
+
       const outputStats = fs.statSync(outputPath);
       this.logger.log(`[${requestId}] Output file exists: ${outputPath} (${outputStats.size} bytes)`);
 
       // Check if returnUrl is requested
-      const returnUrl = combineMediaDto.returnUrl?.toLowerCase() === 'yes' || 
-                       combineMediaDto.returnUrl?.toLowerCase() === 'true';
+      const returnUrl = combineMediaDto.returnUrl?.toLowerCase() === 'yes' ||
+        combineMediaDto.returnUrl?.toLowerCase() === 'true';
       this.logger.log(`[${requestId}] Return URL requested: ${returnUrl}`);
 
       if (returnUrl) {
         // Move file to public/media directory
         const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(outputPath)}`;
         const publicPath = path.join(this.publicMediaDir, fileName);
-        
+
         fs.copyFileSync(outputPath, publicPath);
         this.logger.log(`[${requestId}] Saved output file to public directory: ${publicPath}`);
 
@@ -223,11 +224,11 @@ export class VideoController {
           }
         }, 5000); // Wait 5 seconds before cleanup
       });
-      
+
       this.logger.log(`[${requestId}] ========== /combine-media API CALL COMPLETED ==========`);
     } catch (error: any) {
       this.logger.error(`[${requestId}] Error combining media: ${error.message}`, error.stack);
-      
+
       if (error instanceof BadRequestException) {
         throw error;
       }
@@ -356,30 +357,30 @@ export class VideoController {
       if (format) {
         const requestedFormat = format.toLowerCase().replace('.', '');
         const originalExt = extension.toLowerCase().replace('.', '');
-        
+
         // Only convert if format is different
         if (originalExt !== requestedFormat) {
           this.logger.log(`Converting downloaded file from ${originalExt} to ${requestedFormat}`);
-          
+
           const outputFileName = `${path.parse(fileName).name}.${requestedFormat}`;
           const outputPath = path.join(this.publicMediaDir, outputFileName);
-          
+
           try {
             await this.videoProcessingService.convertMediaFormat(
               filePath,
               requestedFormat,
               outputPath,
             );
-            
+
             // Cleanup original file
             if (fs.existsSync(filePath)) {
               fs.unlinkSync(filePath);
             }
-            
+
             finalFilePath = outputPath;
             finalFileName = outputFileName;
             finalFileSize = fs.statSync(outputPath).size;
-            
+
             // Update MIME type and media type based on format
             const mimeTypeMap: { [key: string]: string } = {
               mp3: 'audio/mpeg',
@@ -395,7 +396,7 @@ export class VideoController {
               mkv: 'video/x-matroska',
             };
             finalMimeType = mimeTypeMap[requestedFormat] || mimeType;
-            
+
             // Update media type if needed
             if (finalMimeType.startsWith('audio/')) {
               mediaType = 'audio';
@@ -404,7 +405,7 @@ export class VideoController {
             } else if (finalMimeType.startsWith('image/')) {
               mediaType = 'image';
             }
-            
+
             this.logger.log(`Conversion successful: ${finalFileName} (${finalFileSize} bytes)`);
           } catch (error: any) {
             this.logger.error(`Format conversion failed: ${error.message}`);
@@ -496,30 +497,30 @@ export class VideoController {
     if (uploadMediaDto?.format) {
       const requestedFormat = uploadMediaDto.format.toLowerCase().replace('.', '');
       const originalExt = path.extname(file.originalname).toLowerCase().replace('.', '');
-      
+
       // Only convert if format is different
       if (originalExt !== requestedFormat) {
         this.logger.log(`Converting ${file.originalname} from ${originalExt} to ${requestedFormat}`);
-        
+
         const outputFileName = `${path.parse(file.filename).name}.${requestedFormat}`;
         const outputPath = path.join(this.publicMediaDir, outputFileName);
-        
+
         try {
           await this.videoProcessingService.convertMediaFormat(
             file.path,
             requestedFormat,
             outputPath,
           );
-          
+
           // Cleanup original file
           if (fs.existsSync(file.path)) {
             fs.unlinkSync(file.path);
           }
-          
+
           finalFilePath = outputPath;
           finalFileName = outputFileName;
           finalFileSize = fs.statSync(outputPath).size;
-          
+
           // Update MIME type based on format
           const mimeTypeMap: { [key: string]: string } = {
             mp3: 'audio/mpeg',
@@ -535,7 +536,7 @@ export class VideoController {
             mkv: 'video/x-matroska',
           };
           finalMimeType = mimeTypeMap[requestedFormat] || file.mimetype;
-          
+
           this.logger.log(`Conversion successful: ${finalFileName} (${finalFileSize} bytes)`);
         } catch (error: any) {
           this.logger.error(`Format conversion failed: ${error.message}`);
@@ -583,20 +584,20 @@ export class VideoController {
     const urlLower = url.toLowerCase();
     const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
     const videoExtensions = ['.mp4', '.webm', '.avi', '.mov', '.mkv', '.flv', '.wmv'];
-    
+
     // Check extension
     for (const ext of imageExtensions) {
       if (urlLower.includes(ext)) {
         return MediaType.IMAGE;
       }
     }
-    
+
     for (const ext of videoExtensions) {
       if (urlLower.includes(ext)) {
         return MediaType.VIDEO;
       }
     }
-    
+
     // Default to image if cannot determine
     this.logger.warn(`Cannot determine media type from URL: ${url}, defaulting to image`);
     return MediaType.IMAGE;
@@ -629,8 +630,8 @@ export class VideoController {
         }
 
         // Detect media type (if videoUrl is provided, it's definitely a video)
-        const mediaType = result.videoUrl 
-          ? MediaType.VIDEO 
+        const mediaType = result.videoUrl
+          ? MediaType.VIDEO
           : this.detectMediaTypeFromUrl(mediaUrl);
 
         // Create section DTO
@@ -661,14 +662,14 @@ export class VideoController {
       }
 
       // Check if returnUrl is requested
-      const returnUrl = combineWithSubtitlesDto.returnUrl?.toLowerCase() === 'yes' || 
-                       combineWithSubtitlesDto.returnUrl?.toLowerCase() === 'true';
+      const returnUrl = combineWithSubtitlesDto.returnUrl?.toLowerCase() === 'yes' ||
+        combineWithSubtitlesDto.returnUrl?.toLowerCase() === 'true';
 
       if (returnUrl) {
         // Move file to public/media directory
         const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(outputPath)}`;
         const publicPath = path.join(this.publicMediaDir, fileName);
-        
+
         fs.copyFileSync(outputPath, publicPath);
         this.logger.log(`Saved output file to public directory: ${publicPath}`);
 
@@ -715,7 +716,7 @@ export class VideoController {
       });
     } catch (error: any) {
       this.logger.error(`Error combining media with subtitles: ${error.message}`, error.stack);
-      
+
       if (error instanceof BadRequestException) {
         throw error;
       }
@@ -736,7 +737,7 @@ export class VideoController {
     this.logger.log(`[${requestId}] ========== /burn-subtitles API CALL STARTED ==========`);
     this.logger.log(`[${requestId}] Video URL: ${burnSubtitlesDto.videoUrl}`);
     this.logger.log(`[${requestId}] Subtitle content length: ${burnSubtitlesDto.subtitleContent.length} characters`);
-    
+
     try {
       // Validate subtitle content
       if (!burnSubtitlesDto.subtitleContent || burnSubtitlesDto.subtitleContent.trim().length === 0) {
@@ -760,20 +761,20 @@ export class VideoController {
         this.logger.error(`[${requestId}] Output file does not exist: ${outputPath}`);
         throw new BadRequestException('Output file was not created');
       }
-      
+
       const outputStats = fs.statSync(outputPath);
       this.logger.log(`[${requestId}] Output file exists: ${outputPath} (${outputStats.size} bytes)`);
 
       // Check if returnUrl is requested
-      const returnUrl = burnSubtitlesDto.returnUrl?.toLowerCase() === 'yes' || 
-                       burnSubtitlesDto.returnUrl?.toLowerCase() === 'true';
+      const returnUrl = burnSubtitlesDto.returnUrl?.toLowerCase() === 'yes' ||
+        burnSubtitlesDto.returnUrl?.toLowerCase() === 'true';
       this.logger.log(`[${requestId}] Return URL requested: ${returnUrl}`);
 
       if (returnUrl) {
         // Move file to public/media directory
         const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(outputPath)}`;
         const publicPath = path.join(this.publicMediaDir, fileName);
-        
+
         fs.copyFileSync(outputPath, publicPath);
         this.logger.log(`[${requestId}] Saved output file to public directory: ${publicPath}`);
 
@@ -824,11 +825,11 @@ export class VideoController {
           }
         }, 5000); // Wait 5 seconds before cleanup
       });
-      
+
       this.logger.log(`[${requestId}] ========== /burn-subtitles API CALL COMPLETED ==========`);
     } catch (error: any) {
       this.logger.error(`[${requestId}] Error burning subtitles: ${error.message}`, error.stack);
-      
+
       if (error instanceof BadRequestException) {
         throw error;
       }
@@ -848,7 +849,7 @@ export class VideoController {
     const requestId = `req_${Date.now()}_${Math.round(Math.random() * 1000)}`;
     this.logger.log(`[${requestId}] ========== /combine-medias API CALL STARTED ==========`);
     this.logger.log(`[${requestId}] Request received with ${combineMediasDto.sections?.length || 0} sections`);
-    
+
     try {
       // Validate sections
       if (!combineMediasDto.sections || combineMediasDto.sections.length === 0) {
@@ -874,16 +875,16 @@ export class VideoController {
       }
 
       // Check if subtitles should be used
-      const useSubtitle = combineMediasDto.useSubtitle === true || 
-                         combineMediasDto.useSubtitle === 'true' ||
-                         (typeof combineMediasDto.useSubtitle === 'string' && combineMediasDto.useSubtitle.toLowerCase() === 'yes');
+      const useSubtitle = combineMediasDto.useSubtitle === true ||
+        combineMediasDto.useSubtitle === 'true' ||
+        (typeof combineMediasDto.useSubtitle === 'string' && combineMediasDto.useSubtitle.toLowerCase() === 'yes');
 
       const useSocialMediaSubtitle = combineMediasDto.useSocialMediaSubtitle === true ||
-                                     combineMediasDto.useSocialMediaSubtitle === 'true' ||
-                                     (typeof combineMediasDto.useSocialMediaSubtitle === 'string' && combineMediasDto.useSocialMediaSubtitle.toLowerCase() === 'yes');
+        combineMediasDto.useSocialMediaSubtitle === 'true' ||
+        (typeof combineMediasDto.useSocialMediaSubtitle === 'string' && combineMediasDto.useSocialMediaSubtitle.toLowerCase() === 'yes');
 
       this.logger.log(`[${requestId}] Subtitle settings: useSubtitle=${useSubtitle}, useSocialMediaSubtitle=${useSocialMediaSubtitle}`);
-      
+
       // Log layout settings if vertical_poster
       if (combineMediasDto.layout === 'vertical_poster') {
         this.logger.log(`[${requestId}] Vertical poster layout enabled`);
@@ -896,17 +897,17 @@ export class VideoController {
       }
 
       // Check if async mode is enabled
-      const asyncMode = combineMediasDto.asyncMode === 'yes' || 
-                        combineMediasDto.asyncMode === 'true';
-      
+      const asyncMode = combineMediasDto.asyncMode === 'yes' ||
+        combineMediasDto.asyncMode === 'true';
+
       if (asyncMode) {
         // Create job and return immediately
         const jobId = this.jobQueueService.createJob();
         this.logger.log(`[${requestId}] Async mode enabled, created job: ${jobId}`);
-        
+
         // Process in background (don't await)
         this.processCombineMediasAsync(jobId, combineMediasDto, req, requestId);
-        
+
         // Return job ID immediately
         return res.status(HttpStatus.ACCEPTED).json({
           jobId,
@@ -917,21 +918,81 @@ export class VideoController {
 
       // Process and combine media with new workflow
       this.logger.log(`[${requestId}] Starting video processing service...`);
+
+      // Build profile config from request parameters for backward compatibility
+      const profileConfigFromRequest = {
+        subtitle: {
+          useSubtitle,
+          useSocialMediaSubtitle,
+          fontFamily: 'Noto Sans CJK KR',
+          fontSize: 48,
+          fontFile: '',
+          primaryColor: '&H00FFFFFF&',
+          outlineColor: '&H00000000&',
+          backColor: '&H80000000&',
+          outline: 5,
+          shadow: 0,
+          alignment: 2,
+          marginL: 50,
+          marginR: 50,
+          marginV: 600,
+          bold: false,
+          italic: false,
+          scaleX: 100,
+          scaleY: 100,
+        },
+        headline: {
+          topHeadline: {
+            fontFamily: 'Hakgyoansim Jiugae',
+            fontSize: 120,
+            fontFile: '',
+            color: '#FFFFFF',
+            highlightColor: '#FF0000',
+            highlightColorASS: '&H0000FF&',
+            borderColor: '#000000',
+            borderWidth: 5,
+            y: 150,
+            alignment: 8,
+            marginL: 50,
+            marginR: 50,
+            marginV: 150,
+            bold: true,
+            italic: false,
+            lineHeight: 1.0,
+          },
+          bottomHeadline: {
+            fontFamily: 'Hakgyoansim Jiugae',
+            fontSize: 100,
+            fontFile: '',
+            color: '#FFFFFF',
+            borderColor: '#000000',
+            borderWidth: 5,
+            alignment: 2,
+            bold: true,
+            italic: false,
+          },
+        },
+        layout: {
+          type: combineMediasDto.layout || 'default',
+          canvasWidth: combineMediasDto.width || 1920,
+          canvasHeight: combineMediasDto.height || 1080,
+          imageWidth: combineMediasDto.width || 1920,
+          imageHeight: combineMediasDto.height || 1080,
+          imageTop: 0,
+          imageAspect: combineMediasDto.imageAspect || '16:9',
+          inputRatio: combineMediasDto.inputRatio || '16:9',
+          verticalGap: combineMediasDto.verticalGap || 24,
+        },
+      };
+
       const outputPath = await this.videoProcessingService.combineMediasWithTranscripts(
         combineMediasDto.audioPath,
         combineMediasDto.sections.map(s => ({ transcript: s.transcript, imagePath: s.imagePath })),
         combineMediasDto.outputFormat || 'mp4',
-        combineMediasDto.width || 1920,
-        combineMediasDto.height || 1080,
-        useSubtitle,
-        useSocialMediaSubtitle,
         requestId,
-        combineMediasDto.layout,
+        profileConfigFromRequest,
         combineMediasDto.topHeadlineText,
         combineMediasDto.bottomHeadlineText,
-        combineMediasDto.verticalGap,
-        combineMediasDto.imageAspect,
-        combineMediasDto.inputRatio,
         combineMediasDto.bottomHeadlineAppear,
       );
       this.logger.log(`[${requestId}] Video processing completed. Output path: ${outputPath}`);
@@ -941,20 +1002,20 @@ export class VideoController {
         this.logger.error(`[${requestId}] Output file does not exist: ${outputPath}`);
         throw new BadRequestException('Output file was not created');
       }
-      
+
       const outputStats = fs.statSync(outputPath);
       this.logger.log(`[${requestId}] Output file exists: ${outputPath} (${outputStats.size} bytes)`);
 
       // Check if returnUrl is requested
-      const returnUrl = combineMediasDto.returnUrl?.toLowerCase() === 'yes' || 
-                       combineMediasDto.returnUrl?.toLowerCase() === 'true';
+      const returnUrl = combineMediasDto.returnUrl?.toLowerCase() === 'yes' ||
+        combineMediasDto.returnUrl?.toLowerCase() === 'true';
       this.logger.log(`[${requestId}] Return URL requested: ${returnUrl}`);
 
       if (returnUrl) {
         // Move file to public/media directory
         const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(outputPath)}`;
         const publicPath = path.join(this.publicMediaDir, fileName);
-        
+
         fs.copyFileSync(outputPath, publicPath);
         this.logger.log(`[${requestId}] Saved output file to public directory: ${publicPath}`);
 
@@ -1005,11 +1066,11 @@ export class VideoController {
           }
         }, 5000); // Wait 5 seconds before cleanup
       });
-      
+
       this.logger.log(`[${requestId}] ========== /combine-medias API CALL COMPLETED ==========`);
     } catch (error: any) {
       this.logger.error(`[${requestId}] Error combining medias: ${error.message}`, error.stack);
-      
+
       if (error instanceof BadRequestException) {
         throw error;
       }
@@ -1034,30 +1095,30 @@ export class VideoController {
       this.logger.log(`[${jobId}] [${requestId}] Starting async video processing for combine-medias...`);
 
       // Check if subtitles should be used
-      const useSubtitle = combineMediasDto.useSubtitle === true || 
-                         combineMediasDto.useSubtitle === 'true' ||
-                         (typeof combineMediasDto.useSubtitle === 'string' && combineMediasDto.useSubtitle.toLowerCase() === 'yes');
+      const useSubtitle = combineMediasDto.useSubtitle === true ||
+        combineMediasDto.useSubtitle === 'true' ||
+        (typeof combineMediasDto.useSubtitle === 'string' && combineMediasDto.useSubtitle.toLowerCase() === 'yes');
 
       const useSocialMediaSubtitle = combineMediasDto.useSocialMediaSubtitle === true ||
-                                     combineMediasDto.useSocialMediaSubtitle === 'true' ||
-                                     (typeof combineMediasDto.useSocialMediaSubtitle === 'string' && combineMediasDto.useSocialMediaSubtitle.toLowerCase() === 'yes');
+        combineMediasDto.useSocialMediaSubtitle === 'true' ||
+        (typeof combineMediasDto.useSocialMediaSubtitle === 'string' && combineMediasDto.useSocialMediaSubtitle.toLowerCase() === 'yes');
+
+      // Build profile config from request parameters
+      const profileConfigFromRequest = {
+        subtitle: { useSubtitle, useSocialMediaSubtitle, fontFamily: 'Noto Sans CJK KR', fontSize: 48, fontFile: '', primaryColor: '&H00FFFFFF&', outlineColor: '&H00000000&', backColor: '&H80000000&', outline: 5, shadow: 0, alignment: 2, marginL: 50, marginR: 50, marginV: 600, bold: false, italic: false, scaleX: 100, scaleY: 100 },
+        headline: { topHeadline: { fontFamily: 'Hakgyoansim Jiugae', fontSize: 120, fontFile: '', color: '#FFFFFF', highlightColor: '#FF0000', highlightColorASS: '&H0000FF&', borderColor: '#000000', borderWidth: 5, y: 150, alignment: 8, marginL: 50, marginR: 50, marginV: 150, bold: true, italic: false, lineHeight: 1.0 }, bottomHeadline: { fontFamily: 'Hakgyoansim Jiugae', fontSize: 100, fontFile: '', color: '#FFFFFF', borderColor: '#000000', borderWidth: 5, alignment: 2, bold: true, italic: false } },
+        layout: { type: combineMediasDto.layout || 'default', canvasWidth: combineMediasDto.width || 1920, canvasHeight: combineMediasDto.height || 1080, imageWidth: combineMediasDto.width || 1920, imageHeight: combineMediasDto.height || 1080, imageTop: 0, imageAspect: combineMediasDto.imageAspect || '16:9', inputRatio: combineMediasDto.inputRatio || '16:9', verticalGap: combineMediasDto.verticalGap || 24 },
+      };
 
       // Process video
       const outputPath = await this.videoProcessingService.combineMediasWithTranscripts(
         combineMediasDto.audioPath,
         combineMediasDto.sections.map(s => ({ transcript: s.transcript, imagePath: s.imagePath })),
         combineMediasDto.outputFormat || 'mp4',
-        combineMediasDto.width || 1920,
-        combineMediasDto.height || 1080,
-        useSubtitle,
-        useSocialMediaSubtitle,
         `${requestId}_${jobId}`,
-        combineMediasDto.layout,
+        profileConfigFromRequest,
         combineMediasDto.topHeadlineText,
         combineMediasDto.bottomHeadlineText,
-        combineMediasDto.verticalGap,
-        combineMediasDto.imageAspect,
-        combineMediasDto.inputRatio,
         combineMediasDto.bottomHeadlineAppear,
       );
 
@@ -1068,7 +1129,7 @@ export class VideoController {
       // Move file to public/media directory
       const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(outputPath)}`;
       const publicPath = path.join(this.publicMediaDir, fileName);
-      
+
       fs.copyFileSync(outputPath, publicPath);
       this.logger.log(`[${jobId}] [${requestId}] Saved output file to public directory: ${publicPath}`);
 
@@ -1106,13 +1167,13 @@ export class VideoController {
       this.logger.log(`[${jobId}] [${requestId}] Starting async video processing...`);
 
       // Check if subtitles should be used
-      const useSubtitle = combineMediaDto.useSubtitle === true || 
-                         combineMediaDto.useSubtitle === 'true' ||
-                         (typeof combineMediaDto.useSubtitle === 'string' && combineMediaDto.useSubtitle.toLowerCase() === 'yes');
+      const useSubtitle = combineMediaDto.useSubtitle === true ||
+        combineMediaDto.useSubtitle === 'true' ||
+        (typeof combineMediaDto.useSubtitle === 'string' && combineMediaDto.useSubtitle.toLowerCase() === 'yes');
 
       const useSocialMediaSubtitle = combineMediaDto.useSocialMediaSubtitle === true ||
-                                     combineMediaDto.useSocialMediaSubtitle === 'true' ||
-                                     (typeof combineMediaDto.useSocialMediaSubtitle === 'string' && combineMediaDto.useSocialMediaSubtitle.toLowerCase() === 'yes');
+        combineMediaDto.useSocialMediaSubtitle === 'true' ||
+        (typeof combineMediaDto.useSocialMediaSubtitle === 'string' && combineMediaDto.useSocialMediaSubtitle.toLowerCase() === 'yes');
 
       // Process video
       const outputPath = await this.videoProcessingService.combineMedia(
@@ -1133,7 +1194,7 @@ export class VideoController {
       // Move file to public/media directory
       const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(outputPath)}`;
       const publicPath = path.join(this.publicMediaDir, fileName);
-      
+
       fs.copyFileSync(outputPath, publicPath);
       this.logger.log(`[${jobId}] [${requestId}] Saved output file to public directory: ${publicPath}`);
 
@@ -1158,12 +1219,303 @@ export class VideoController {
   }
 
   /**
+   * Load profile JSON file
+   */
+  private async loadProfile(profileId: string = 'default'): Promise<any> {
+    const profilesDir = path.join(process.cwd(), 'profiles');
+    const profileFileName = profileId === 'default' ? 'default.json' : `${profileId}.json`;
+    const profilePath = path.join(profilesDir, profileFileName);
+
+    if (!fs.existsSync(profilePath)) {
+      this.logger.warn(`Profile ${profileId} not found, falling back to default`);
+      const defaultPath = path.join(profilesDir, 'default.json');
+      if (!fs.existsSync(defaultPath)) {
+        throw new BadRequestException(`Profile file not found: ${profilePath}`);
+      }
+      const profileContent = fs.readFileSync(defaultPath, 'utf-8');
+      return JSON.parse(profileContent);
+    }
+
+    const profileContent = fs.readFileSync(profilePath, 'utf-8');
+    return JSON.parse(profileContent);
+  }
+
+  /**
+   * Combine media with profile-based styling
+   */
+  @Post('combine-media-profile')
+  async combineMediaProfile(
+    @Body() combineMediaProfileDto: CombineMediaProfileDto,
+    @Res() res: Response,
+    @Req() req: Request,
+  ) {
+    const requestId = `req_${Date.now()}_${Math.round(Math.random() * 1000)}`;
+    this.logger.log(`[${requestId}] ========== /combine-media-profile API CALL STARTED ==========`);
+    this.logger.log(`[${requestId}] Request received with ${combineMediaProfileDto.sections?.length || 0} sections`);
+
+    try {
+      // Validate sections
+      if (!combineMediaProfileDto.sections || combineMediaProfileDto.sections.length === 0) {
+        this.logger.error(`[${requestId}] Validation failed: No sections provided`);
+        throw new BadRequestException('At least one section is required');
+      }
+
+      // Validate audio path
+      if (!combineMediaProfileDto.audioPath) {
+        this.logger.error(`[${requestId}] Validation failed: No audio path provided`);
+        throw new BadRequestException('audioPath is required');
+      }
+
+      // Validate each section has transcript and imagePath
+      for (let i = 0; i < combineMediaProfileDto.sections.length; i++) {
+        const section = combineMediaProfileDto.sections[i];
+        if (!section.transcript || section.transcript.trim().length === 0) {
+          throw new BadRequestException(`Section ${i + 1}: transcript is required`);
+        }
+        if (!section.imagePath) {
+          throw new BadRequestException(`Section ${i + 1}: imagePath is required`);
+        }
+      }
+
+      // Load profile
+      const profileId = combineMediaProfileDto.profile || 'default';
+      this.logger.log(`[${requestId}] Loading profile: ${profileId}`);
+      const profile = await this.loadProfile(profileId);
+      this.logger.log(`[${requestId}] Profile loaded: ${profile.name} (${profile.profileId})`);
+
+      // Extract config from profile
+      const profileConfig = profile.config;
+      const subtitleConfig = profileConfig.subtitle;
+      const layoutConfig = profileConfig.layout;
+      const headlineConfig = profileConfig.headline;
+
+      const useSubtitle = subtitleConfig.useSubtitle === true;
+      const useSocialMediaSubtitle = subtitleConfig.useSocialMediaSubtitle === true;
+
+      this.logger.log(`[${requestId}] Profile subtitle settings: useSubtitle=${useSubtitle}, useSocialMediaSubtitle=${useSocialMediaSubtitle}`);
+      this.logger.log(`[${requestId}] Profile layout: ${layoutConfig.type}`);
+      this.logger.log(`[${requestId}] Profile canvas: ${layoutConfig.canvasWidth}x${layoutConfig.canvasHeight}`);
+
+      const layout = layoutConfig.type === 'vertical_poster' ? 'vertical_poster' : 'default';
+      const topHeadlineText = combineMediaProfileDto.topHeadlineText || '';
+      const bottomHeadlineText = combineMediaProfileDto.bottomHeadlineText || '';
+      const width = layoutConfig.canvasWidth || 1920;
+      const height = layoutConfig.canvasHeight || 1080;
+
+      // Check if async mode is enabled
+      const asyncMode = combineMediaProfileDto.asyncMode === 'yes' ||
+        combineMediaProfileDto.asyncMode === 'true';
+
+      if (asyncMode) {
+        // Create job and return immediately
+        const jobId = this.jobQueueService.createJob();
+        this.logger.log(`[${requestId}] Async mode enabled, created job: ${jobId}`);
+
+        // Process in background (don't await)
+        this.processCombineMediaProfileAsync(jobId, combineMediaProfileDto, profile, req, requestId);
+
+        // Return job ID immediately
+        return res.status(HttpStatus.ACCEPTED).json({
+          jobId,
+          status: 'pending',
+          message: 'Job created successfully. Use /api/job/{jobId}/status to check status.',
+        });
+      }
+
+      // Get highlight color from profile
+      const highlightColorASS = headlineConfig?.topHeadline?.highlightColorASS || '&H0000FF&';
+      this.logger.log(`[${requestId}] Using highlight color from profile: ${highlightColorASS}`);
+      this.logger.log(`[${requestId}] Using headline font from profile: ${headlineConfig?.topHeadline?.fontFamily || 'Hakgyoansim Jiugae (default)'}`);
+
+      // Process and combine media with profile settings
+      this.logger.log(`[${requestId}] Starting video processing service...`);
+      const outputPath = await this.videoProcessingService.combineMediasWithTranscripts(
+        combineMediaProfileDto.audioPath,
+        combineMediaProfileDto.sections.map(s => ({ transcript: s.transcript, imagePath: s.imagePath })),
+        combineMediaProfileDto.outputFormat || 'mp4',
+        requestId,
+        profileConfig, // Pass full profile config
+        topHeadlineText,
+        bottomHeadlineText,
+        combineMediaProfileDto.bottomHeadlineAppear || 'start', // bottomHeadlineAppear
+      );
+      this.logger.log(`[${requestId}] Video processing completed. Output path: ${outputPath}`);
+
+      // Check if file exists
+      if (!fs.existsSync(outputPath)) {
+        this.logger.error(`[${requestId}] Output file does not exist: ${outputPath}`);
+        throw new BadRequestException('Output file was not created');
+      }
+
+      const outputStats = fs.statSync(outputPath);
+      this.logger.log(`[${requestId}] Output file exists: ${outputPath} (${outputStats.size} bytes)`);
+
+      // Check if returnUrl is requested
+      const returnUrl = combineMediaProfileDto.returnUrl?.toLowerCase() === 'yes' ||
+        combineMediaProfileDto.returnUrl?.toLowerCase() === 'true';
+      this.logger.log(`[${requestId}] Return URL requested: ${returnUrl}`);
+
+      if (returnUrl) {
+        // Move file to public/media directory
+        const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(outputPath)}`;
+        const publicPath = path.join(this.publicMediaDir, fileName);
+
+        fs.copyFileSync(outputPath, publicPath);
+        this.logger.log(`[${requestId}] Saved output file to public directory: ${publicPath}`);
+
+        // Cleanup temp file
+        if (fs.existsSync(outputPath)) {
+          fs.unlinkSync(outputPath);
+        }
+
+        // Generate public URL
+        const protocol = req.protocol || 'http';
+        const host = req.get('host') || 'localhost:3000';
+        const baseUrl = `${protocol}://${host}`;
+        const publicUrl = `${baseUrl}/media/${fileName}`;
+
+        this.logger.log(`[${requestId}] ========== /combine-media-profile API CALL COMPLETED ==========`);
+        this.logger.log(`[${requestId}] Returning public URL: ${publicUrl}`);
+
+        // Return URL as plain text string
+        res.setHeader('Content-Type', 'text/plain');
+        return res.send(publicUrl);
+      }
+
+      // Stream file to response (original behavior)
+      const stats = fs.statSync(outputPath);
+      const fileName = path.basename(outputPath);
+
+      this.logger.log(`[${requestId}] Streaming file to response: ${fileName} (${stats.size} bytes)`);
+
+      // Set response headers
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${fileName}"`,
+      );
+      res.setHeader('Content-Length', stats.size);
+
+      // Stream file to response
+      const fileStream = fs.createReadStream(outputPath);
+      fileStream.pipe(res);
+
+      // Cleanup file after streaming
+      fileStream.on('end', () => {
+        this.logger.log(`[${requestId}] File streaming completed`);
+        setTimeout(() => {
+          if (fs.existsSync(outputPath)) {
+            fs.unlinkSync(outputPath);
+            this.logger.log(`[${requestId}] Cleaned up output file: ${outputPath}`);
+          }
+        }, 5000); // Wait 5 seconds before cleanup
+      });
+
+      this.logger.log(`[${requestId}] ========== /combine-media-profile API CALL COMPLETED ==========`);
+    } catch (error: any) {
+      this.logger.error(`[${requestId}] Error combining media with profile: ${error.message}`, error.stack);
+
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      throw new BadRequestException(
+        `Failed to combine media with profile: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Process combine-media-profile in background (async mode)
+   */
+  private async processCombineMediaProfileAsync(
+    jobId: string,
+    combineMediaProfileDto: CombineMediaProfileDto,
+    profile: any,
+    req: Request,
+    requestId: string,
+  ): Promise<void> {
+    try {
+      this.jobQueueService.updateJobStatus(jobId, JobStatus.PROCESSING);
+      this.logger.log(`[${jobId}] [${requestId}] Starting async video processing for combine-media-profile...`);
+
+      // Extract config from profile
+      const profileConfig = profile.config;
+      const subtitleConfig = profileConfig.subtitle;
+      const layoutConfig = profileConfig.layout;
+      const headlineConfig = profileConfig.headline;
+
+      const useSubtitle = subtitleConfig.useSubtitle === true;
+      const useSocialMediaSubtitle = subtitleConfig.useSocialMediaSubtitle === true;
+
+      const layout = layoutConfig.type === 'vertical_poster' ? 'vertical_poster' : 'default';
+      const topHeadlineText = combineMediaProfileDto.topHeadlineText || '';
+      const bottomHeadlineText = combineMediaProfileDto.bottomHeadlineText || '';
+      const width = layoutConfig.canvasWidth || 1920;
+      const height = layoutConfig.canvasHeight || 1080;
+      const highlightColorASS = headlineConfig?.topHeadline?.highlightColorASS || '&H0000FF&';
+
+      this.logger.log(`[${jobId}] [${requestId}] Using highlight color from profile: ${highlightColorASS}`);
+      this.logger.log(`[${jobId}] [${requestId}] Using headline font from profile: ${headlineConfig?.topHeadline?.fontFamily || 'Hakgyoansim Jiugae (default)'}`);
+
+      // Process video with full profile config
+      const outputPath = await this.videoProcessingService.combineMediasWithTranscripts(
+        combineMediaProfileDto.audioPath,
+        combineMediaProfileDto.sections.map(s => ({ transcript: s.transcript, imagePath: s.imagePath })),
+        combineMediaProfileDto.outputFormat || 'mp4',
+        requestId,
+        profile.config, // Pass full profile config from loaded profile
+        topHeadlineText,
+        bottomHeadlineText,
+        combineMediaProfileDto.bottomHeadlineAppear || 'start', // bottomHeadlineAppear
+      );
+
+      this.logger.log(`[${jobId}] [${requestId}] Video processing completed. Output path: ${outputPath}`);
+
+      // Check if returnUrl is requested
+      const returnUrl = combineMediaProfileDto.returnUrl?.toLowerCase() === 'yes' ||
+        combineMediaProfileDto.returnUrl?.toLowerCase() === 'true';
+
+      if (returnUrl) {
+        // Move file to public/media directory
+        const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(outputPath)}`;
+        const publicPath = path.join(this.publicMediaDir, fileName);
+
+        fs.copyFileSync(outputPath, publicPath);
+        this.logger.log(`[${jobId}] [${requestId}] Saved output file to public directory: ${publicPath}`);
+
+        // Cleanup temp file
+        if (fs.existsSync(outputPath)) {
+          fs.unlinkSync(outputPath);
+        }
+
+        // Generate public URL
+        const protocol = req.protocol || 'http';
+        const host = req.get('host') || 'localhost:3000';
+        const baseUrl = `${protocol}://${host}`;
+        const publicUrl = `${baseUrl}/media/${fileName}`;
+
+        // Set job result with URL
+        this.jobQueueService.setJobResult(jobId, publicUrl);
+        this.logger.log(`[${jobId}] [${requestId}] Job completed with URL: ${publicUrl}`);
+      } else {
+        // Set job result with file path
+        this.jobQueueService.setJobResult(jobId, undefined, outputPath);
+        this.logger.log(`[${jobId}] [${requestId}] Job completed. File available at: ${outputPath}`);
+      }
+    } catch (error: any) {
+      this.logger.error(`[${jobId}] [${requestId}] Error processing combine-media-profile: ${error.message}`, error.stack);
+      this.jobQueueService.setJobError(jobId, error.message);
+    }
+  }
+
+  /**
    * Get job status
    */
   @Get('job/:jobId/status')
   async getJobStatus(@Param('jobId') jobId: string) {
     const job = this.jobQueueService.getJob(jobId);
-    
+
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
     }
@@ -1186,7 +1538,7 @@ export class VideoController {
   @Get('job/:jobId/result')
   async getJobResult(@Param('jobId') jobId: string) {
     const job = this.jobQueueService.getJob(jobId);
-    
+
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
     }
