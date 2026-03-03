@@ -4,6 +4,7 @@
   "description": "Profile dengan useSubtitle, layout vertical_poster, headline dengan font Baekmuk dan highlight warna hijau #21c24f",
   "version": "1.0.0",
   "createdAt": "2026-01-21",
+  
   "config": {
     "subtitle": {
       "useSubtitle": true,
@@ -25,10 +26,11 @@
       "scaleX": 100,
       "scaleY": 100
     },
+    
     "headline": {
       "topHeadline": {
         "fontFamily": "Baekmuk Batang",
-        "fontSize": 90,
+        "fontSize": 120,
         "fontFile": "/app/public/baekmuk/batang.ttf",
         "color": "white",
         "highlightColor": "#21c24f",
@@ -39,7 +41,7 @@
         "alignment": 8,
         "marginL": 50,
         "marginR": 50,
-        "marginV": 180,
+        "marginV": 80,
         "bold": false,
         "italic": false,
         "lineHeight": 0.75
@@ -56,6 +58,7 @@
         "italic": false
       }
     },
+    
     "layout": {
       "type": "vertical_poster",
       "canvasWidth": 1080,
@@ -68,6 +71,7 @@
       "verticalGap": 24
     }
   },
+  
   "notes": {
     "subtitle": "Menggunakan regular SRT subtitles (useSubtitle: true)",
     "headline": "Top headline font size 173px dengan font Baekmuk Batang, bottom headline 120px. Support <h> tags untuk highlight dengan warna hijau #21c24f",

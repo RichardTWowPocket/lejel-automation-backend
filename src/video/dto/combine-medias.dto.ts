@@ -84,6 +84,10 @@ export class CombineMediasDto {
   @IsOptional()
   @IsEnum(BottomHeadlineAppear)
   bottomHeadlineAppear?: BottomHeadlineAppear; // When to show bottom headline: 'start' (from beginning) or 'last' (only last section)
+
+  @IsOptional()
+  @IsString()
+  profile?: string; // Profile ID to load from profiles/{profile}.json (e.g. saham_hedgehog)
 }
 
 

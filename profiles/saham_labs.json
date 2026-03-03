@@ -4,6 +4,7 @@
   "description": "Profile dengan useSubtitle, layout vertical_poster, headline dengan font Gasoek One dan highlight warna #2648ad",
   "version": "1.0.0",
   "createdAt": "2026-01-21",
+  
   "config": {
     "subtitle": {
       "useSubtitle": true,
@@ -25,10 +26,11 @@
       "scaleX": 100,
       "scaleY": 100
     },
+    
     "headline": {
       "topHeadline": {
         "fontFamily": "Gasoek One",
-        "fontSize": 120,
+        "fontSize": 173,
         "fontFile": "/app/public/Gasoek_One/GasoekOne-Regular.ttf",
         "color": "white",
         "highlightColor": "#2648ad",
@@ -39,7 +41,7 @@
         "alignment": 8,
         "marginL": 50,
         "marginR": 50,
-        "marginV": 170,
+        "marginV": 80,
         "bold": false,
         "italic": false,
         "lineHeight": 0.75
@@ -56,6 +58,7 @@
         "italic": false
       }
     },
+    
     "layout": {
       "type": "vertical_poster",
       "canvasWidth": 1080,
@@ -68,6 +71,7 @@
       "verticalGap": 24
     }
   },
+  
   "notes": {
     "subtitle": "Menggunakan regular SRT subtitles (useSubtitle: true)",
     "headline": "Top headline font size 120px dengan font Gasoek One, bottom headline 100px. Support <h> tags untuk highlight dengan warna #2648ad",

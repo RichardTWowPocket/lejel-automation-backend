@@ -279,10 +279,10 @@ async function main() {
   // Step 3: Create video from image
   const videoPath = path.join(tempDir, `input_video_${Date.now()}.mp4`);
   console.log(`\n🎥 Creating video from image...`);
-
+  
   // Create video from image using FFMPEG
   const createVideoCmd = `ffmpeg -loop 1 -i "${absoluteImagePath}" -t ${videoDuration} -vf "scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2" -pix_fmt yuv420p -c:v libx264 -preset fast -crf 23 "${videoPath}"`;
-
+  
   try {
     console.log(`Running: ${createVideoCmd}`);
     await execAsync(createVideoCmd);
@@ -297,20 +297,20 @@ async function main() {
 
   // Step 4: Build FFMPEG command with ASS filters
   const outputVideo = outputPath || path.join(tempDir, `output_${Date.now()}.mp4`);
-
+  
   let filters = [];
-
+  
   // Add headline filter
   if (headlineAssPath) {
     const fontFilePath = topHeadlineConfig.fontFile;
     let fontsDir = null;
-
+    
     if (fontFilePath) {
       fontsDir = path.dirname(fontFilePath);
     }
 
     const escapedHeadlinePath = escapePathForFilter(headlineAssPath);
-    const headlineFilter = fontsDir
+    const headlineFilter = fontsDir 
       ? `ass=${escapedHeadlinePath}:fontsdir=${fontsDir}`
       : `ass=${escapedHeadlinePath}`;
     filters.push(headlineFilter);
@@ -318,17 +318,8 @@ async function main() {
 
   // Add subtitle filter
   if (subtitleAssPath) {
-    const fontFilePath = subtitleConfig.fontFile;
-    let fontsDir = null;
-
-    if (fontFilePath) {
-      fontsDir = path.dirname(fontFilePath);
-    }
-
     const escapedSubtitlePath = escapePathForFilter(subtitleAssPath);
-    const subtitleFilter = fontsDir
-      ? `ass=${escapedSubtitlePath}:fontsdir=${fontsDir}`
-      : `ass=${escapedSubtitlePath}`;
+    const subtitleFilter = `ass=${escapedSubtitlePath}`;
     filters.push(subtitleFilter);
   }
 
@@ -338,10 +329,10 @@ async function main() {
   }
 
   const filterString = filters.join(',');
-
+  
   // Step 5: Run FFMPEG
   const ffmpegCmd = `ffmpeg -i "${videoPath}" -vf "${filterString}" -c:v libx264 -c:a copy -pix_fmt yuv420p -crf 23 -preset fast -movflags +faststart "${outputVideo}"`;
-
+  
   console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('🚀 EXECUTING FFMPEG COMMAND');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
@@ -351,12 +342,12 @@ async function main() {
   try {
     console.log('⏳ Processing video (this may take a while)...\n');
     const { stdout, stderr } = await execAsync(ffmpegCmd);
-
+    
     if (stderr) {
       // FFMPEG outputs progress to stderr, which is normal
       console.log(stderr);
     }
-
+    
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('✅ SUCCESS!');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');

@@ -1514,7 +1514,7 @@ export class VideoController {
    */
   @Get('job/:jobId/status')
   async getJobStatus(@Param('jobId') jobId: string) {
-    const job = this.jobQueueService.getJob(jobId);
+    const job = await this.jobQueueService.getJob(jobId);
 
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
@@ -1537,7 +1537,7 @@ export class VideoController {
    */
   @Get('job/:jobId/result')
   async getJobResult(@Param('jobId') jobId: string) {
-    const job = this.jobQueueService.getJob(jobId);
+    const job = await this.jobQueueService.getJob(jobId);
 
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);

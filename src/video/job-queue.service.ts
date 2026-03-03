@@ -1,4 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 
 export enum JobStatus {
   PENDING = 'pending',
@@ -7,7 +9,7 @@ export enum JobStatus {
   FAILED = 'failed',
 }
 
-export interface Job {
+export interface JobData {
   id: string;
   status: JobStatus;
   createdAt: Date;
@@ -28,144 +30,123 @@ export interface Job {
 @Injectable()
 export class JobQueueService {
   private readonly logger = new Logger(JobQueueService.name);
-  private jobs: Map<string, Job> = new Map();
-  private readonly MAX_JOBS = 1000; // Prevent memory leaks
-  private readonly CLEANUP_INTERVAL = 60 * 60 * 1000; // 1 hour
+  private jobStates: Map<string, JobData> = new Map();
+  private readonly MAX_JOBS = 1000;
 
-  constructor() {
-    // Cleanup old completed/failed jobs periodically
-    setInterval(() => this.cleanupOldJobs(), this.CLEANUP_INTERVAL);
+  constructor(
+    @InjectQueue('video-rendering') private readonly videoQueue: Queue,
+  ) {
+    setInterval(() => this.cleanupOldJobs(), 3600000);
   }
 
   /**
-   * Create a new job and return its ID
+   * Add a rendering job to the queue
    */
-  createJob(): string {
+  async addRenderingJob(type: 'combine-media' | 'combine-medias', payload: any, requestId?: string): Promise<string> {
     const jobId = `job_${Date.now()}_${Math.round(Math.random() * 1e9)}`;
-    const job: Job = {
+    const jobData: JobData = {
       id: jobId,
       status: JobStatus.PENDING,
       createdAt: new Date(),
     };
 
-    this.jobs.set(jobId, job);
-    this.logger.log(`Created job: ${jobId}`);
+    this.jobStates.set(jobId, jobData);
 
-    // Cleanup if we have too many jobs
-    if (this.jobs.size > this.MAX_JOBS) {
-      this.cleanupOldJobs();
-    }
+    // Add to BullMQ with the generated jobId as the job identity
+    await this.videoQueue.add(
+      'render',
+      { type, payload, requestId },
+      { jobId, removeOnComplete: false, removeOnFail: false },
+    );
 
+    this.logger.log(`Added rendering job to queue: ${jobId}`);
     return jobId;
   }
 
   /**
-   * Get job by ID
+   * Helper for original createJob (deprecated but kept for compatibility)
    */
-  getJob(jobId: string): Job | undefined {
-    return this.jobs.get(jobId);
+  createJob(): string {
+    const jobId = `job_${Date.now()}_${Math.round(Math.random() * 1e9)}`;
+    this.jobStates.set(jobId, { id: jobId, status: JobStatus.PENDING, createdAt: new Date() });
+    return jobId;
   }
 
-  /**
-   * Update job status
-   */
-  updateJobStatus(jobId: string, status: JobStatus): void {
-    const job = this.jobs.get(jobId);
-    if (!job) {
-      this.logger.warn(`Job not found: ${jobId}`);
-      return;
-    }
+  async getJob(jobId: string): Promise<JobData | undefined> {
+    // Check in-memory state first
+    let state = this.jobStates.get(jobId);
 
-    job.status = status;
-    
-    if (status === JobStatus.PROCESSING && !job.startedAt) {
-      job.startedAt = new Date();
-    }
-    
-    if (status === JobStatus.COMPLETED || status === JobStatus.FAILED) {
-      job.completedAt = new Date();
-    }
+    // Sync with BullMQ if found
+    const bullJob = await this.videoQueue.getJob(jobId);
+    if (bullJob) {
+      if (!state) {
+        state = { id: jobId, status: JobStatus.PENDING, createdAt: new Date(bullJob.timestamp) };
+        this.jobStates.set(jobId, state);
+      }
 
-    this.logger.log(`Job ${jobId} status updated to: ${status}`);
-  }
-
-  /**
-   * Update job progress
-   */
-  updateJobProgress(jobId: string, current: number, total: number, message?: string): void {
-    const job = this.jobs.get(jobId);
-    if (!job) {
-      this.logger.warn(`Job not found: ${jobId}`);
-      return;
-    }
-
-    job.progress = { current, total, message };
-    this.logger.debug(`Job ${jobId} progress: ${current}/${total} - ${message || ''}`);
-  }
-
-  /**
-   * Set job result (success)
-   */
-  setJobResult(jobId: string, url?: string, filePath?: string): void {
-    const job = this.jobs.get(jobId);
-    if (!job) {
-      this.logger.warn(`Job not found: ${jobId}`);
-      return;
-    }
-
-    job.result = { url, filePath };
-    job.status = JobStatus.COMPLETED;
-    job.completedAt = new Date();
-
-    this.logger.log(`Job ${jobId} completed with result: ${url || filePath}`);
-  }
-
-  /**
-   * Set job error
-   */
-  setJobError(jobId: string, error: string): void {
-    const job = this.jobs.get(jobId);
-    if (!job) {
-      this.logger.warn(`Job not found: ${jobId}`);
-      return;
-    }
-
-    job.result = { error };
-    job.status = JobStatus.FAILED;
-    job.completedAt = new Date();
-
-    this.logger.error(`Job ${jobId} failed: ${error}`);
-  }
-
-  /**
-   * Cleanup old completed/failed jobs (older than 24 hours)
-   */
-  private cleanupOldJobs(): void {
-    const now = new Date();
-    const maxAge = 24 * 60 * 60 * 1000; // 24 hours
-
-    let cleaned = 0;
-    for (const [jobId, job] of this.jobs.entries()) {
-      if (
-        (job.status === JobStatus.COMPLETED || job.status === JobStatus.FAILED) &&
-        job.completedAt &&
-        now.getTime() - job.completedAt.getTime() > maxAge
-      ) {
-        this.jobs.delete(jobId);
-        cleaned++;
+      const bullStatus = await bullJob.getState();
+      if (bullStatus === 'completed') {
+        state.status = JobStatus.COMPLETED;
+        state.completedAt = state.completedAt || new Date(bullJob.finishedOn || Date.now());
+        if (bullJob.returnvalue?.filePath) state.result = { ...state.result, filePath: bullJob.returnvalue.filePath };
+      } else if (bullStatus === 'failed') {
+        state.status = JobStatus.FAILED;
+        state.result = { ...state.result, error: bullJob.failedReason };
+      } else if (bullStatus === 'active') {
+        state.status = JobStatus.PROCESSING;
+        state.startedAt = state.startedAt || new Date(bullJob.processedOn || Date.now());
       }
     }
 
-    if (cleaned > 0) {
-      this.logger.log(`Cleaned up ${cleaned} old jobs`);
+    return state;
+  }
+
+  updateJobStatus(jobId: string, status: JobStatus): void {
+    const job = this.jobStates.get(jobId);
+    if (job) {
+      job.status = status;
+      if (status === JobStatus.PROCESSING && !job.startedAt) job.startedAt = new Date();
+      if (status === JobStatus.COMPLETED || status === JobStatus.FAILED) job.completedAt = new Date();
     }
   }
 
+  updateJobProgress(jobId: string, current: number, total: number, message?: string): void {
+    const job = this.jobStates.get(jobId);
+    if (job) job.progress = { current, total, message };
+  }
+
+  setJobResult(jobId: string, url?: string, filePath?: string): void {
+    const job = this.jobStates.get(jobId);
+    if (job) {
+      job.result = { url, filePath };
+      job.status = JobStatus.COMPLETED;
+      job.completedAt = new Date();
+    }
+  }
+
+  setJobError(jobId: string, error: string): void {
+    const job = this.jobStates.get(jobId);
+    if (job) {
+      job.result = { error };
+      job.status = JobStatus.FAILED;
+      job.completedAt = new Date();
+    }
+  }
+
+  private cleanupOldJobs(): void {
+    const now = Date.now();
+    const maxAge = 86400000;
+    for (const [id, job] of this.jobStates.entries()) {
+      if (job.completedAt && (now - job.completedAt.getTime() > maxAge)) {
+        this.jobStates.delete(id);
+      }
+    }
+  }
   /**
-   * Get all jobs (for debugging)
+   * Get all job states (for debugging)
    */
-  getAllJobs(): Job[] {
-    return Array.from(this.jobs.values());
+  getAllJobs(): JobData[] {
+    return Array.from(this.jobStates.values());
   }
 }
 

@@ -9,6 +9,9 @@ dist/
 build/
 *.tsbuildinfo
 
+# Legacy SQLite (project uses PostgreSQL only)
+database.sqlite
+
 # Environment variables
 .env
 .env.local
