@@ -4,13 +4,19 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { HealthModule } from './health/health.module';
 import { TranscriptionModule } from './transcription/transcription.module';
 import { VideoModule } from './video/video.module';
+import { ProfileModule } from './profile/profile.module';
 import { AuthModule } from './auth/auth.module';
 import { VideoRequestModule } from './video-request/video-request.module';
 import { BullModule } from '@nestjs/bullmq';
 import { User } from './entities/user.entity';
 import { VideoRequest } from './entities/video-request.entity';
+import { GoogleClient } from './entities/google-client.entity';
 import { OAuthCredential } from './entities/oauth-credential.entity';
 import { OAuthModule } from './oauth/oauth.module';
+import { LlmModule } from './llm/llm.module';
+import { ElevenLabsModule } from './elevenlabs/elevenlabs.module';
+import { KieAiModule } from './kie-ai/kie-ai.module';
+import { FontsModule } from './fonts/fonts.module';
 
 @Module({
   imports: [
@@ -34,7 +40,7 @@ import { OAuthModule } from './oauth/oauth.module';
         return {
           type: 'postgres',
           url: databaseUrl,
-          entities: [User, VideoRequest, OAuthCredential],
+          entities: [User, VideoRequest, GoogleClient, OAuthCredential],
           synchronize: true,
         };
       },
@@ -51,7 +57,12 @@ import { OAuthModule } from './oauth/oauth.module';
     VideoRequestModule,
     HealthModule,
     TranscriptionModule,
+    LlmModule,
+    ElevenLabsModule,
+    KieAiModule,
     VideoModule,
+    ProfileModule,
+    FontsModule,
   ],
 })
 export class AppModule { }

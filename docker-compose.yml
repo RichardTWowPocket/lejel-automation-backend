@@ -15,6 +15,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - TEMP_DIR=/app/temp
       - WHISPER_SERVICE_URL=http://whisper-worker:8000
       - DOCKER_SOCKET_PATH=/var/run/docker.sock
       - DATABASE_URL=postgresql://${POSTGRES_USER:-lejel}:${POSTGRES_PASSWORD:-lejel_password}@lejel-postgres:5432/${POSTGRES_DB:-lejel}
@@ -25,6 +26,7 @@ services:
     volumes:
       - ./temp:/app/temp
       - ./public/media:/app/public/media
+      - ./public/fonts/custom:/app/public/fonts/custom
       - ./profiles:/app/profiles
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -66,7 +68,7 @@ services:
 
 networks:
   lejel-network:
-    driver: bridge
+    external: true
     name: lejel-network  # External name for reverse proxy access
   shared-services-network:
     external: true

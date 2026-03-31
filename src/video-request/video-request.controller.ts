@@ -10,6 +10,7 @@ import {
   Headers,
 } from '@nestjs/common';
 import { VideoRequestService } from './video-request.service';
+import { AdminGuard } from '../auth/admin.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { User as ReqUser } from '../auth/user.decorator';
 import { CreateVideoRequestDto } from './dto/create-video-request.dto';
@@ -32,26 +33,49 @@ export class VideoRequestController {
       id: request.id,
       fullScript: request.fullScript,
       segmentedScripts: request.segmentedScripts,
+      llmModel: request.llmModel || undefined,
       status: request.status,
       createdAt: request.createdAt,
       submittedAt: request.submittedAt,
       connectionId: request.connectionId || undefined,
+      contentType: request.contentType || undefined,
+      profileId: request.profileId || undefined,
+      imageModel: request.imageModel || undefined,
+      videoModel: request.videoModel || undefined,
     };
   }
 
   @Get()
   @UseGuards(JwtAuthGuard)
   async list(
-    @ReqUser() user: { id: string },
+    @ReqUser() user: { id: string; role?: 'user' | 'admin' },
     @Query('status') status?: VideoRequestStatus,
   ) {
-    return this.videoRequestService.findAllByUser(user.id, status);
+    return this.videoRequestService.findAllByUser(user.id, status, {
+      isAdmin: user.role === 'admin',
+    });
   }
 
   @Get(':id')
   @UseGuards(JwtAuthGuard)
-  async getOne(@ReqUser() user: { id: string }, @Param('id') id: string) {
-    return this.videoRequestService.findOne(id, user.id);
+  async getOne(
+    @ReqUser() user: { id: string; role?: 'user' | 'admin' },
+    @Param('id') id: string,
+  ) {
+    return this.videoRequestService.findOne(id, user.id, {
+      isAdmin: user.role === 'admin',
+    });
+  }
+
+  @Get(':id/detail')
+  @UseGuards(JwtAuthGuard)
+  async getOneDetail(
+    @ReqUser() user: { id: string; role?: 'user' | 'admin' },
+    @Param('id') id: string,
+  ) {
+    return this.videoRequestService.findDetail(id, user.id, {
+      isAdmin: user.role === 'admin',
+    });
   }
 
   @Patch(':id')
@@ -77,5 +101,29 @@ export class VideoRequestController {
       dto.resultUrl,
       dto.errorMessage,
     );
+  }
+
+  @Get('admin/pending-youtube')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async getPendingYoutubeApprovals() {
+    return this.videoRequestService.findPendingYoutubeApprovals();
+  }
+
+  @Post(':id/admin/approve-youtube')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async approveYoutubeUpload(
+    @Param('id') id: string,
+    @ReqUser() user: { id: string },
+  ) {
+    return this.videoRequestService.approveYoutubeUpload(id, user.id);
+  }
+
+  @Post(':id/admin/reject-youtube')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async rejectYoutubeUpload(
+    @Param('id') id: string,
+    @ReqUser() user: { id: string },
+  ) {
+    return this.videoRequestService.rejectYoutubeUpload(id, user.id);
   }
 }

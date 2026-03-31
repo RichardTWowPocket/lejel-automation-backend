@@ -5,12 +5,19 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import axios from 'axios';
+import { Queue } from 'bullmq';
+import * as fs from 'fs';
+import * as path from 'path';
 import { VideoRequest, VideoRequestStatus } from '../entities/video-request.entity';
+import { LlmService, SupportedLlmModel } from '../llm/llm.service';
+import { YouTubeService } from '../oauth/youtube.service';
 import { CreateVideoRequestDto } from './dto/create-video-request.dto';
 import { UpdateVideoRequestDto } from './dto/update-video-request.dto';
+import { VIDEO_GENERATION_JOB, VIDEO_GENERATION_QUEUE } from './video-request.queue';
+import { RequestFsService } from '../video/request-fs.service';
 
 @Injectable()
 export class VideoRequestService {
@@ -18,69 +25,40 @@ export class VideoRequestService {
     @InjectRepository(VideoRequest)
     private readonly videoRequestRepository: Repository<VideoRequest>,
     private readonly configService: ConfigService,
+    private readonly llmService: LlmService,
+    private readonly youTubeService: YouTubeService,
+    private readonly requestFsService: RequestFsService,
+    @InjectQueue(VIDEO_GENERATION_QUEUE)
+    private readonly videoGenerationQueue: Queue,
   ) {}
 
-  async create(userId: string, dto: CreateVideoRequestDto): Promise<VideoRequest> {
-    const request = this.videoRequestRepository.create({
-      userId,
-      fullScript: dto.fullScript,
-      segmentedScripts: dto.segmentedScripts,
-      status: 'pending',
-      submittedAt: new Date(),
-      connectionId: dto.connectionId || null,
-    });
-    const saved = await this.videoRequestRepository.save(request);
-
-    const baseUrl = this.configService.get<string>('BASE_URL', 'http://localhost:3000');
-    const callbackUrl = `${baseUrl}/api/video-requests/${saved.id}/callback`;
-    const webhookUrl = this.configService.get<string>('N8N_WEBHOOK_URL');
-
-    if (webhookUrl) {
-      try {
-        await axios.post(
-          webhookUrl,
-          {
-            requestId: saved.id,
-            fullScript: saved.fullScript,
-            segmentedScripts: saved.segmentedScripts,
-            callbackUrl,
-            connectionId: saved.connectionId || undefined,
-            uploadToYoutube: !!saved.connectionId,
-            uploadApiUrl: saved.connectionId ? `${baseUrl.replace(/\/$/, '')}/api/oauth/youtube/upload` : undefined,
-          },
-          { timeout: 10000 },
-        );
-      } catch (err: any) {
-        await this.videoRequestRepository.update(saved.id, {
-          status: 'failed',
-          errorMessage: err.message || 'Failed to trigger n8n webhook',
-          completedAt: new Date(),
-        });
-        throw new BadRequestException(
-          'Video request created but failed to trigger pipeline: ' + (err.message || 'unknown'),
-        );
-      }
+  private listFilesSafe(dirPath: string): string[] {
+    try {
+      if (!fs.existsSync(dirPath)) return [];
+      return fs
+        .readdirSync(dirPath)
+        .filter((name) => fs.statSync(path.join(dirPath, name)).isFile())
+        .sort();
+    } catch {
+      return [];
     }
-
-    return saved;
   }
 
-  async findAllByUser(userId: string, status?: VideoRequestStatus) {
-    const qb = this.videoRequestRepository
-      .createQueryBuilder('vr')
-      .leftJoinAndSelect('vr.user', 'user')
-      .where('vr.userId = :userId', { userId })
-      .orderBy('vr.createdAt', 'DESC');
-
-    if (status) {
-      qb.andWhere('vr.status = :status', { status });
+  private readJsonSafe<T = unknown>(filePath: string): T | null {
+    try {
+      if (!fs.existsSync(filePath)) return null;
+      return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as T;
+    } catch {
+      return null;
     }
+  }
 
-    const list = await qb.getMany();
-    return list.map((vr) => ({
+  private toResponse(vr: VideoRequest) {
+    return {
       id: vr.id,
       fullScript: vr.fullScript,
       segmentedScripts: vr.segmentedScripts,
+      llmModel: vr.llmModel || undefined,
       status: vr.status,
       createdAt: vr.createdAt,
       updatedAt: vr.updatedAt,
@@ -89,11 +67,126 @@ export class VideoRequestService {
       resultUrl: vr.resultUrl,
       errorMessage: vr.errorMessage,
       connectionId: vr.connectionId || undefined,
+      youtubeUploadMode: vr.youtubeUploadMode,
+      contentType: vr.contentType || undefined,
+      profileId: vr.profileId || undefined,
+      imageModel: vr.imageModel || undefined,
+      videoModel: vr.videoModel || undefined,
+      finalUrl: vr.finalUrl || undefined,
+      debugMetaUrl: vr.debugMetaUrl || undefined,
+      youtubeUrl: vr.youtubeUrl || undefined,
+      youtubeVideoId: vr.youtubeVideoId || undefined,
+      youtubeApprovalRejectedAt: vr.youtubeApprovalRejectedAt || undefined,
       user: vr.user ? { id: vr.user.id, name: vr.user.name, email: vr.user.email } : undefined,
-    }));
+      createdBy: vr.user ? { id: vr.user.id, name: vr.user.name, email: vr.user.email } : undefined,
+    };
   }
 
-  async findOne(id: string, userId: string) {
+  async create(userId: string, dto: CreateVideoRequestDto): Promise<VideoRequest> {
+    const model = (dto.model || 'gpt-5-4') as SupportedLlmModel;
+    const segmentedScripts =
+      dto.segmentedScripts && dto.segmentedScripts.length > 0
+        ? dto.segmentedScripts
+        : await this.llmService.segmentScript(dto.fullScript, model);
+
+    if (!segmentedScripts || segmentedScripts.length === 0) {
+      throw new BadRequestException('Failed to generate script segments');
+    }
+
+    const youtubeUploadMode = dto.youtubeUploadMode || 'none';
+    if (youtubeUploadMode !== 'none' && !dto.connectionId) {
+      throw new BadRequestException(
+        'connectionId is required when youtubeUploadMode is pending_approval or direct',
+      );
+    }
+
+    const request = this.videoRequestRepository.create({
+      userId,
+      fullScript: dto.fullScript,
+      segmentedScripts,
+      llmModel: model,
+      contentType: dto.contentType || null,
+      profileId: dto.profileId || null,
+      imageModel: dto.imageModel || null,
+      videoModel: dto.videoModel || null,
+      status: 'pending',
+      submittedAt: new Date(),
+      youtubeUploadMode,
+      connectionId: dto.connectionId || null,
+      youtubeTitle: dto.youtubeTitle || null,
+      youtubeDescription: dto.youtubeDescription || null,
+      youtubeTags: dto.youtubeTags || null,
+      youtubePrivacyStatus: dto.youtubePrivacyStatus || 'private',
+    });
+    const saved = await this.videoRequestRepository.save(request);
+    await this.videoGenerationQueue.add(
+      VIDEO_GENERATION_JOB,
+      { requestId: saved.id },
+      {
+        attempts: 2,
+        removeOnComplete: 1000,
+        removeOnFail: 1000,
+      },
+    );
+
+    return saved;
+  }
+
+  async getEntityById(id: string): Promise<VideoRequest> {
+    const request = await this.videoRequestRepository.findOne({ where: { id } });
+    if (!request) throw new NotFoundException('Video request not found');
+    return request;
+  }
+
+  async markProcessing(id: string): Promise<void> {
+    await this.videoRequestRepository.update(id, {
+      status: 'processing',
+      errorMessage: null,
+    });
+  }
+
+  async markCompleted(id: string, finalUrl?: string, debugMetaUrl?: string): Promise<void> {
+    await this.videoRequestRepository.update(id, {
+      status: 'completed',
+      completedAt: new Date(),
+      resultUrl: finalUrl || null,
+      finalUrl: finalUrl || null,
+      debugMetaUrl: debugMetaUrl || null,
+      errorMessage: null,
+    });
+  }
+
+  async markFailed(id: string, message: string): Promise<void> {
+    await this.videoRequestRepository.update(id, {
+      status: 'failed',
+      completedAt: new Date(),
+      errorMessage: message,
+    });
+  }
+
+  async findAllByUser(
+    userId: string,
+    status?: VideoRequestStatus,
+    options?: { isAdmin?: boolean },
+  ) {
+    const qb = this.videoRequestRepository
+      .createQueryBuilder('vr')
+      .leftJoinAndSelect('vr.user', 'user')
+      .orderBy('vr.createdAt', 'DESC');
+
+    if (!options?.isAdmin) {
+      qb.where('vr.userId = :userId', { userId });
+    }
+
+    if (status) {
+      qb.andWhere('vr.status = :status', { status });
+    }
+
+    const list = await qb.getMany();
+    return list.map((vr) => this.toResponse(vr));
+  }
+
+  async findOne(id: string, userId: string, options?: { isAdmin?: boolean }) {
     const request = await this.videoRequestRepository.findOne({
       where: { id },
       relations: ['user'],
@@ -101,24 +194,128 @@ export class VideoRequestService {
     if (!request) {
       throw new NotFoundException('Video request not found');
     }
-    if (request.userId !== userId) {
+    const isAdmin = options?.isAdmin === true;
+    if (!isAdmin && request.userId !== userId) {
       throw new ForbiddenException('Not allowed to access this request');
     }
+    return this.toResponse(request);
+  }
+
+  async findDetail(id: string, userId: string, options?: { isAdmin?: boolean }) {
+    const request = await this.videoRequestRepository.findOne({
+      where: { id },
+      relations: ['user'],
+    });
+    if (!request) {
+      throw new NotFoundException('Video request not found');
+    }
+    const isAdmin = options?.isAdmin === true;
+    if (!isAdmin && request.userId !== userId) {
+      throw new ForbiddenException('Not allowed to access this request');
+    }
+
+    const baseUrl = this.configService.get<string>('BASE_URL') || 'http://localhost:3000';
+    const rootDir = this.requestFsService.getRequestDir(id);
+    const audioDir = path.join(rootDir, 'audio');
+    const transcriptDir = path.join(rootDir, 'transcript');
+    const subtitlesDir = path.join(rootDir, 'subtitles');
+    const segmentsDir = path.join(rootDir, 'segments');
+    const finalDir = path.join(rootDir, 'final');
+    const metaDir = path.join(rootDir, 'meta');
+
+    const audioFiles = this.listFilesSafe(audioDir);
+    const transcriptFiles = this.listFilesSafe(transcriptDir);
+    const subtitleFiles = this.listFilesSafe(subtitlesDir);
+    const segmentFiles = this.listFilesSafe(segmentsDir);
+    const finalFiles = this.listFilesSafe(finalDir);
+    const metaFiles = this.listFilesSafe(metaDir);
+
+    const segmentTiming = this.readJsonSafe<
+      Array<{ index: number; text: string; start: number; end: number; duration: number }>
+    >(path.join(metaDir, 'segment-timing.json')) || [];
+    const mediaPlan = this.readJsonSafe<
+      Array<{ index: number; mediaType: 'image' | 'video'; prompt?: string; imageModel?: string; videoModel?: string }>
+    >(path.join(metaDir, 'media-plan.json')) || [];
+
+    const toUrl = (subdir: string, filename: string) =>
+      this.requestFsService.toPublicUrl(baseUrl, id, `${subdir}/${filename}`);
+
+    const audioUrls = audioFiles.map((f) => toUrl('audio', f));
+    const transcriptUrls = transcriptFiles.map((f) => toUrl('transcript', f));
+    const subtitleUrls = subtitleFiles.map((f) => toUrl('subtitles', f));
+    const finalUrls = finalFiles.map((f) => toUrl('final', f));
+    const metaUrls = metaFiles.map((f) => toUrl('meta', f));
+    const segmentVideoUrls = segmentFiles
+      .filter((f) => /^segment-\d+\.mp4$/i.test(f))
+      .map((f) => toUrl('segments', f));
+
+    const segmentArtifacts = request.segmentedScripts.map((text, idx) => {
+      const oneBased = idx + 1;
+      const imageCandidates = segmentFiles
+        .filter((f) => f.startsWith(`segment${oneBased}-image-`) && /\.(png|jpg|jpeg|webp)$/i.test(f))
+        .sort();
+      const videoCandidates = segmentFiles
+        .filter((f) => f.startsWith(`segment${oneBased}-video-`) && f.endsWith('.mp4'))
+        .sort();
+      const mergedCandidates = segmentFiles
+        .filter((f) => f.startsWith(`segment${oneBased}-merged-`) && f.endsWith('.mp4'))
+        .sort();
+      const finalSegment = `segment-${oneBased}.mp4`;
+
+      const timing = segmentTiming.find((t) => t.index === idx);
+      const plan = mediaPlan.find((m) => m.index === idx);
+
+      return {
+        index: idx,
+        text,
+        timing: timing || null,
+        mediaType: plan?.mediaType || null,
+        prompt: plan?.prompt || null,
+        imageModel: plan?.imageModel || null,
+        videoModel: plan?.videoModel || null,
+        imageUrls: imageCandidates.map((f) => toUrl('segments', f)),
+        generatedChunkVideoUrls: videoCandidates.map((f) => toUrl('segments', f)),
+        mergedVideoUrls: mergedCandidates.map((f) => toUrl('segments', f)),
+        finalSegmentUrl: segmentFiles.includes(finalSegment)
+          ? toUrl('segments', finalSegment)
+          : null,
+      };
+    });
+
+    const hasAudio = audioFiles.length > 0;
+    const hasTranscript = transcriptFiles.length > 0;
+    const hasMediaPlan = mediaPlan.length > 0;
+    const hasSegments = segmentVideoUrls.length > 0;
+    const hasFinal = finalFiles.some((f) => f === 'final-video.mp4');
+
+    const progressStages = [
+      { key: 'audio', label: 'Audio generated', done: hasAudio },
+      { key: 'transcript', label: 'Transcript generated', done: hasTranscript },
+      { key: 'planning', label: 'Media plan generated', done: hasMediaPlan },
+      { key: 'segments', label: 'Segment videos generated', done: hasSegments },
+      { key: 'final', label: 'Final video generated', done: hasFinal || request.status === 'completed' },
+    ];
+    const doneCount = progressStages.filter((s) => s.done).length;
+    const percent = Math.round((doneCount / progressStages.length) * 100);
+
     return {
-      id: request.id,
-      fullScript: request.fullScript,
-      segmentedScripts: request.segmentedScripts,
-      status: request.status,
-      createdAt: request.createdAt,
-      updatedAt: request.updatedAt,
-      submittedAt: request.submittedAt,
-      completedAt: request.completedAt,
-      resultUrl: request.resultUrl,
-      errorMessage: request.errorMessage,
-      connectionId: request.connectionId || undefined,
-      user: request.user
-        ? { id: request.user.id, name: request.user.name, email: request.user.email }
-        : undefined,
+      request: this.toResponse(request),
+      progress: {
+        status: request.status,
+        percent,
+        doneCount,
+        totalCount: progressStages.length,
+        stages: progressStages,
+      },
+      artifacts: {
+        audioUrls,
+        transcriptUrls,
+        subtitleUrls,
+        segmentVideoUrls,
+        finalUrls,
+        metaUrls,
+      },
+      segments: segmentArtifacts,
     };
   }
 
@@ -163,7 +360,103 @@ export class VideoRequestService {
       if (errorMessage) update.errorMessage = errorMessage;
     }
 
+    if (status === 'completed' && resultUrl && request.connectionId) {
+      if (request.youtubeUploadMode === 'pending_approval') {
+        update.status = 'pending_youtube_approval';
+      } else if (request.youtubeUploadMode === 'direct') {
+        const videoId = await this.youTubeService.uploadVideoFromUrl(
+          resultUrl,
+          {
+            title:
+              request.youtubeTitle ||
+              request.fullScript.slice(0, 90) ||
+              `Video request ${request.id}`,
+            description: request.youtubeDescription || '',
+            tags: request.youtubeTags || [],
+            privacyStatus: request.youtubePrivacyStatus || 'private',
+          },
+          './temp',
+          request.connectionId,
+        );
+        update.youtubeVideoId = videoId;
+        update.youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        update.youtubeErrorMessage = null;
+      }
+    }
+
     await this.videoRequestRepository.update(id, update);
+    return { ok: true };
+  }
+
+  async findPendingYoutubeApprovals() {
+    const list = await this.videoRequestRepository.find({
+      where: { status: 'pending_youtube_approval' },
+      relations: ['user'],
+      order: { createdAt: 'DESC' },
+    });
+    return list.map((vr) => this.toResponse(vr));
+  }
+
+  async approveYoutubeUpload(id: string, _adminUserId?: string) {
+    const request = await this.videoRequestRepository.findOne({
+      where: { id },
+      relations: ['user'],
+    });
+    if (!request) {
+      throw new NotFoundException('Video request not found');
+    }
+    if (request.status !== 'pending_youtube_approval') {
+      throw new BadRequestException('Request is not waiting for YouTube approval');
+    }
+    if (!request.resultUrl || !request.connectionId) {
+      throw new BadRequestException('Request is missing resultUrl or connectionId');
+    }
+
+    const videoId = await this.youTubeService.uploadVideoFromUrl(
+      request.resultUrl,
+      {
+        title:
+          request.youtubeTitle ||
+          request.fullScript.slice(0, 90) ||
+          `Video request ${request.id}`,
+        description: request.youtubeDescription || '',
+        tags: request.youtubeTags || [],
+        privacyStatus: request.youtubePrivacyStatus || 'private',
+      },
+      './temp',
+      request.connectionId,
+    );
+
+    request.status = 'completed';
+    request.youtubeVideoId = videoId;
+    request.youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    request.youtubeErrorMessage = null;
+    await this.videoRequestRepository.save(request);
+
+    return {
+      ok: true,
+      youtubeVideoId: videoId,
+      youtubeUrl: request.youtubeUrl,
+    };
+  }
+
+  async rejectYoutubeUpload(id: string, adminUserId?: string) {
+    const request = await this.videoRequestRepository.findOne({
+      where: { id },
+      relations: ['user'],
+    });
+    if (!request) {
+      throw new NotFoundException('Video request not found');
+    }
+    if (request.status !== 'pending_youtube_approval') {
+      throw new BadRequestException('Request is not waiting for YouTube approval');
+    }
+
+    request.status = 'completed';
+    request.youtubeApprovalRejectedAt = new Date();
+    request.youtubeApprovalRejectedBy = adminUserId || null;
+    await this.videoRequestRepository.save(request);
+
     return { ok: true };
   }
 }

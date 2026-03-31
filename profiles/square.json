@@ -1,0 +1,66 @@
+{
+  "profileId": "square",
+  "name": "Square (1:1)",
+  "description": "Square video for Instagram feed, 1080x1080",
+  "canvas": {
+    "ratio": "1:1",
+    "resolution": "1080p"
+  },
+  "content": {
+    "ratio": "1:1",
+    "resolution": "1080p",
+    "xOffset": 0,
+    "yOffset": 0
+  },
+  "subtitle": {
+    "enabled": true,
+    "socialMediaStyle": false,
+    "background": true,
+    "font": "Noto Sans CJK KR",
+    "fontSize": 40,
+    "fontColor": "#FFFFFF",
+    "highlightColor": "#FF0000",
+    "outlineColor": "#000000",
+    "outlineWidth": 3,
+    "backColor": "#000000",
+    "alignment": 2,
+    "yOffset": 0,
+    "xOffset": 0,
+    "bold": false,
+    "italic": false
+  },
+  "headline": {
+    "top": {
+      "enabled": true,
+      "font": "Hakgyoansim Jiugae",
+      "fontSize": 80,
+      "fontColor": "#FFFFFF",
+      "highlightColor": "#FF0000",
+      "outlineColor": "#000000",
+      "outlineWidth": 4,
+      "background": false,
+      "backColor": "#000000",
+      "alignment": 8,
+      "yOffset": 0,
+      "xOffset": 0,
+      "bold": false,
+      "italic": false
+    },
+    "bottom": {
+      "enabled": false,
+      "font": "Hakgyoansim Jiugae",
+      "fontSize": 60,
+      "fontColor": "#FFFFFF",
+      "highlightColor": "#FF0000",
+      "outlineColor": "#000000",
+      "outlineWidth": 4,
+      "background": false,
+      "backColor": "#000000",
+      "alignment": 2,
+      "yOffset": 0,
+      "xOffset": 0,
+      "bold": false,
+      "italic": false
+    }
+  }
+}

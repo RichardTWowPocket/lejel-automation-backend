@@ -1,0 +1,66 @@
+{
+  "profileId": "short_form_no_headline_use_social_media",
+  "name": "Short Form No Headline Use Social Media",
+  "description": "Short Form No Headline Use Social Media",
+  "canvas": {
+    "ratio": "9:16",
+    "resolution": "1080p"
+  },
+  "content": {
+    "ratio": "9:16",
+    "resolution": "1080p",
+    "xOffset": 0,
+    "yOffset": 0
+  },
+  "subtitle": {
+    "enabled": true,
+    "font": "Gasoek One",
+    "fontSize": 72,
+    "fontColor": "#FFFFFF",
+    "highlightColor": "#FF0000",
+    "outlineColor": "#000000",
+    "outlineWidth": 5,
+    "background": false,
+    "backColor": "#000000",
+    "alignment": 5,
+    "yOffset": 400,
+    "xOffset": 0,
+    "bold": false,
+    "italic": false,
+    "socialMediaStyle": true
+  },
+  "headline": {
+    "top": {
+      "enabled": false,
+      "font": "Noto Sans CJK KR",
+      "fontSize": 120,
+      "fontColor": "#FFFFFF",
+      "highlightColor": "#FF0000",
+      "outlineColor": "#000000",
+      "outlineWidth": 5,
+      "background": false,
+      "backColor": "#000000",
+      "alignment": 8,
+      "yOffset": 0,
+      "xOffset": 0,
+      "bold": false,
+      "italic": false
+    },
+    "bottom": {
+      "enabled": false,
+      "font": "Noto Sans CJK KR",
+      "fontSize": 100,
+      "fontColor": "#FFFFFF",
+      "highlightColor": "#FF0000",
+      "outlineColor": "#000000",
+      "outlineWidth": 5,
+      "background": false,
+      "backColor": "#000000",
+      "alignment": 2,
+      "yOffset": 0,
+      "xOffset": 0,
+      "bold": false,
+      "italic": false
+    }
+  }
+}

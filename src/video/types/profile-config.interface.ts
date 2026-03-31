@@ -1,89 +1,45 @@
-/**
- * Profile configuration type definitions
- * These interfaces define the structure of profile JSON files
- */
-
-export interface SubtitleConfig {
-    useSubtitle: boolean;
-    useSocialMediaSubtitle: boolean;
-    fontFamily: string;
-    fontSize: number;
-    fontFile: string;
-    primaryColor: string;
-    outlineColor: string;
-    backColor: string;
-    outline: number;
-    shadow: number;
-    alignment: number;
-    marginL: number;
-    marginR: number;
-    marginV: number;
-    bold: boolean;
-    italic: boolean;
-    scaleX: number;
-    scaleY: number;
+export interface DimensionConfig {
+  ratio: '1:1' | '3:4' | '4:3' | '9:16' | '16:9';
+  resolution: '720p' | '1080p';
 }
 
-export interface TopHeadlineConfig {
-    fontFamily: string;
-    fontSize: number;
-    fontFile: string;
-    color: string;
-    highlightColor: string;
-    highlightColorASS: string;
-    borderColor: string;
-    borderWidth: number;
-    y: number;
-    alignment: number;
-    marginL: number;
-    marginR: number;
-    marginV: number;
-    bold: boolean;
-    italic: boolean;
-    lineHeight: number;
+export interface ContentConfig extends DimensionConfig {
+  xOffset: number;
+  yOffset: number;
 }
 
-export interface BottomHeadlineConfig {
-    fontFamily: string;
-    fontSize: number;
-    fontFile: string;
-    color: string;
-    borderColor: string;
-    borderWidth: number;
-    alignment: number;
-    bold: boolean;
-    italic: boolean;
+export interface TextStyleConfig {
+  enabled: boolean;
+  font: string;
+  fontSize: number;
+  fontColor: string;
+  highlightColor: string;
+  outlineColor: string;
+  outlineWidth: number;
+  background: boolean;
+  backColor: string;
+  alignment: number;
+  yOffset: number;
+  xOffset: number;
+  bold: boolean;
+  italic: boolean;
+}
+
+export interface SubtitleConfig extends TextStyleConfig {
+  socialMediaStyle: boolean;
 }
 
 export interface HeadlineConfig {
-    topHeadline: TopHeadlineConfig;
-    bottomHeadline: BottomHeadlineConfig;
+  top: TextStyleConfig;
+  bottom: TextStyleConfig;
 }
 
-export interface LayoutConfig {
-    type: 'default' | 'vertical_poster';
-    canvasWidth: number;
-    canvasHeight: number;
-    imageWidth: number;
-    imageHeight: number;
-    imageTop: number;
-    imageAspect: string;
-    inputRatio: string;
-    verticalGap: number;
-}
-
-export interface ProfileConfig {
-    subtitle: SubtitleConfig;
-    headline: HeadlineConfig;
-    layout: LayoutConfig;
-}
-
-export interface Profile {
-    profileId: string;
-    name: string;
-    description: string;
-    version: string;
-    createdAt: string;
-    config: ProfileConfig;
-    notes?: any;
+export interface VideoProfile {
+  profileId: string;
+  name: string;
+  description: string;
+  canvas: DimensionConfig;
+  content: ContentConfig;
+  subtitle: SubtitleConfig;
+  headline: HeadlineConfig;
 }

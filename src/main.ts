@@ -20,6 +20,9 @@ async function bootstrap() {
   app.useStaticAssets(join(__dirname, '..', 'public', 'media'), {
     prefix: '/media/',
   });
+  app.useStaticAssets(join(__dirname, '..', 'public', 'requests'), {
+    prefix: '/requests/',
+  });
   
   app.useGlobalPipes(
     new ValidationPipe({
@@ -41,6 +44,7 @@ async function bootstrap() {
   await app.listen(port);
   console.log(`Application is running on: http://localhost:${port}`);
   console.log(`Media files available at: http://localhost:${port}/media/`);
+  console.log(`Request files available at: http://localhost:${port}/requests/`);
 }
 bootstrap();
 

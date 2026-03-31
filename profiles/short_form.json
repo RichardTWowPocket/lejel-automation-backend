@@ -1,0 +1,66 @@
+{
+  "profileId": "short_form",
+  "name": "Short Form (9:16)",
+  "description": "Vertical short-form video for TikTok/Reels/Shorts, 1080x1920",
+  "canvas": {
+    "ratio": "9:16",
+    "resolution": "1080p"
+  },
+  "content": {
+    "ratio": "9:16",
+    "resolution": "1080p",
+    "xOffset": 0,
+    "yOffset": 0
+  },
+  "subtitle": {
+    "enabled": true,
+    "socialMediaStyle": true,
+    "background": false,
+    "font": "Noto Sans CJK KR",
+    "fontSize": 72,
+    "fontColor": "#FFFFFF",
+    "highlightColor": "#FF0000",
+    "outlineColor": "#000000",
+    "outlineWidth": 8,
+    "backColor": "#000000",
+    "alignment": 5,
+    "yOffset": 0,
+    "xOffset": 0,
+    "bold": true,
+    "italic": false
+  },
+  "headline": {
+    "top": {
+      "enabled": false,
+      "font": "Hakgyoansim Jiugae",
+      "fontSize": 120,
+      "fontColor": "#FFFFFF",
+      "highlightColor": "#FF0000",
+      "outlineColor": "#000000",
+      "outlineWidth": 5,
+      "background": false,
+      "backColor": "#000000",
+      "alignment": 8,
+      "yOffset": 0,
+      "xOffset": 0,
+      "bold": false,
+      "italic": false
+    },
+    "bottom": {
+      "enabled": false,
+      "font": "Hakgyoansim Jiugae",
+      "fontSize": 100,
+      "fontColor": "#FFFFFF",
+      "highlightColor": "#FF0000",
+      "outlineColor": "#000000",
+      "outlineWidth": 5,
+      "background": false,
+      "backColor": "#000000",
+      "alignment": 2,
+      "yOffset": 0,
+      "xOffset": 0,
+      "bold": false,
+      "italic": false
+    }
+  }
+}

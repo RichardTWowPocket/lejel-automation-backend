@@ -4,7 +4,10 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
 } from 'typeorm';
+import { GoogleClient } from './google-client.entity';
 
 export type OAuthProvider = 'google_youtube';
 
@@ -16,13 +19,21 @@ export class OAuthCredential {
   @Column()
   provider: OAuthProvider;
 
-  /** Encrypted Google Client ID (per-credential) */
-  @Column('text')
-  clientIdEnc: string;
+  /** When set, credentials are read from this Google client (preferred). */
+  @Column('uuid', { nullable: true })
+  googleClientId: string | null;
 
-  /** Encrypted Google Client Secret (per-credential) */
-  @Column('text')
-  clientSecretEnc: string;
+  @ManyToOne(() => GoogleClient, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({ name: 'googleClientId' })
+  googleClient: GoogleClient | null;
+
+  /** Legacy: encrypted client ID (used only when googleClientId is null). */
+  @Column('text', { nullable: true })
+  clientIdEnc: string | null;
+
+  /** Legacy: encrypted client secret (used only when googleClientId is null). */
+  @Column('text', { nullable: true })
+  clientSecretEnc: string | null;
 
   /** Encrypted access token (null until OAuth complete) */
   @Column('text', { nullable: true })

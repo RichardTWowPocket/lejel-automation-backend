@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import axios from 'axios';
 import { OAuthCredential, OAuthProvider } from '../entities/oauth-credential.entity';
 import { EncryptionService } from './encryption.service';
+import { GoogleClientService } from './google-client.service';
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -22,10 +23,29 @@ export class OAuthService {
     private readonly credRepo: Repository<OAuthCredential>,
     private readonly config: ConfigService,
     private readonly encryption: EncryptionService,
+    private readonly googleClientService: GoogleClientService,
   ) {}
 
   /**
-   * Create a new YouTube connection with custom Google client ID and secret.
+   * Create a YouTube connection using an existing Google client (no raw credentials).
+   */
+  async createConnectionWithClient(
+    googleClientId: string,
+    label: string,
+    provider: OAuthProvider = 'google_youtube',
+  ): Promise<OAuthCredential> {
+    await this.googleClientService.getCredentials(googleClientId);
+    const cred = this.credRepo.create({
+      provider,
+      googleClientId,
+      scope: YOUTUBE_SCOPES,
+      label: label?.trim() || '',
+    });
+    return this.credRepo.save(cred);
+  }
+
+  /**
+   * Legacy: Create a new YouTube connection with raw Google client ID and secret.
    */
   async createConnection(
     clientId: string,
@@ -47,11 +67,12 @@ export class OAuthService {
   }
 
   /**
-   * List all YouTube connections.
+   * List all YouTube connections (admin). Includes googleClientEnabled for each.
    */
   async listConnections(provider: OAuthProvider = 'google_youtube') {
     const list = await this.credRepo.find({
       where: { provider },
+      relations: ['googleClient'],
       order: { createdAt: 'DESC' },
     });
     return list.map((c) => ({
@@ -60,7 +81,43 @@ export class OAuthService {
       connected: !!(c.accessTokenEnc && c.refreshTokenEnc),
       expiresAt: c.expiresAt,
       createdAt: c.createdAt,
+      googleClientEnabled: c.googleClient ? c.googleClient.enabled : true,
     }));
+  }
+
+  /**
+   * List YouTube connections available to non-admin users (only those whose Google client is enabled).
+   */
+  async listConnectionsForUser(provider: OAuthProvider = 'google_youtube') {
+    const list = await this.credRepo.find({
+      where: { provider },
+      relations: ['googleClient'],
+      order: { createdAt: 'DESC' },
+    });
+    const filtered = list.filter(
+      (c) => !c.googleClientId || (c.googleClient != null && c.googleClient.enabled),
+    );
+    return filtered.map((c) => ({
+      id: c.id,
+      label: c.label || `Connection ${c.id.slice(0, 8)}`,
+      connected: !!(c.accessTokenEnc && c.refreshTokenEnc),
+      expiresAt: c.expiresAt,
+      createdAt: c.createdAt,
+    }));
+  }
+
+  /** Resolve clientId and clientSecret for a credential (from Google client or legacy fields). */
+  private async getCredentialsForCredential(cred: OAuthCredential): Promise<{ clientId: string; clientSecret: string }> {
+    if (cred.googleClientId) {
+      return this.googleClientService.getCredentials(cred.googleClientId);
+    }
+    if (cred.clientIdEnc && cred.clientSecretEnc) {
+      return {
+        clientId: this.encryption.decrypt(cred.clientIdEnc),
+        clientSecret: this.encryption.decrypt(cred.clientSecretEnc),
+      };
+    }
+    throw new BadRequestException('Connection has no credentials (missing Google client or legacy clientId/clientSecret)');
   }
 
   async getGoogleAuthUrl(
@@ -72,7 +129,7 @@ export class OAuthService {
     if (!cred) {
       throw new NotFoundException('Connection not found');
     }
-    const clientId = this.encryption.decrypt(cred.clientIdEnc);
+    const { clientId } = await this.getCredentialsForCredential(cred);
     const state = encodeState(credentialId, successRedirect);
     const params = new URLSearchParams({
       client_id: clientId,
@@ -95,8 +152,7 @@ export class OAuthService {
     if (!cred) {
       throw new NotFoundException('Connection not found');
     }
-    const clientId = this.encryption.decrypt(cred.clientIdEnc);
-    const clientSecret = this.encryption.decrypt(cred.clientSecretEnc);
+    const { clientId, clientSecret } = await this.getCredentialsForCredential(cred);
 
     const res = await axios.post(
       GOOGLE_TOKEN_URL,
@@ -140,8 +196,7 @@ export class OAuthService {
     }
 
     const refreshToken = this.encryption.decrypt(cred.refreshTokenEnc);
-    const clientId = this.encryption.decrypt(cred.clientIdEnc);
-    const clientSecret = this.encryption.decrypt(cred.clientSecretEnc);
+    const { clientId, clientSecret } = await this.getCredentialsForCredential(cred);
 
     const res = await axios.post(
       GOOGLE_TOKEN_URL,

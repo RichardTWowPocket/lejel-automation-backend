@@ -25,13 +25,13 @@ export class TranscriptionService {
       throw new BadRequestException('Audio file not found');
     }
 
-    // Use AssemblyAI for transcription
-    this.logger.log(`[TranscriptionService] Using AssemblyAI for transcription (language: ${language || 'ko'})`);
+    // Use AssemblyAI for transcription (auto-detect language when not specified)
+    this.logger.log(`[TranscriptionService] Using AssemblyAI for transcription (language: ${language ? language : 'auto-detect'})`);
 
     try {
       const { whisperFormat, transcriptId } = await this.assemblyAIService.transcribe(
         audioFilePath,
-        language || 'ko', // Default to Korean
+        language || undefined, // Omit for auto language detection
       );
 
       this.logger.log(`[TranscriptionService] AssemblyAI transcription completed successfully (transcript ID: ${transcriptId})`);

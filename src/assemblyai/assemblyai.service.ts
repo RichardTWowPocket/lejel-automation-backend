@@ -9,6 +9,7 @@ export class AssemblyAIService {
     private readonly logger = new Logger(AssemblyAIService.name);
     private readonly apiKey: string;
     private readonly baseUrl = 'https://api.assemblyai.com/v2';
+    private readonly maxRetries = 3;
 
     constructor(private configService: ConfigService) {
         this.apiKey = this.configService.get<string>('ASSEMBLY_API_KEY');
@@ -17,29 +18,79 @@ export class AssemblyAIService {
         }
     }
 
+    private errorMessage(err: unknown): string {
+        if (axios.isAxiosError(err)) {
+            return err.message;
+        }
+        if (err instanceof Error) {
+            return err.message;
+        }
+        return String(err);
+    }
+
+    private isRetryableError(err: unknown): boolean {
+        const msg = this.errorMessage(err).toLowerCase();
+        // DNS/network/transient gateway errors.
+        return (
+            msg.includes('eai_again') ||
+            msg.includes('etimedout') ||
+            msg.includes('timeout') ||
+            msg.includes('econnreset') ||
+            msg.includes('socket hang up') ||
+            msg.includes('enotfound') ||
+            msg.includes('econnrefused') ||
+            msg.includes('502') ||
+            msg.includes('503') ||
+            msg.includes('504')
+        );
+    }
+
+    private async withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+        let lastError: unknown;
+        for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+            try {
+                return await fn();
+            } catch (err) {
+                lastError = err;
+                const retryable = this.isRetryableError(err);
+                const message = this.errorMessage(err);
+                this.logger.warn(
+                    `[AssemblyAI] ${label} failed (attempt ${attempt}/${this.maxRetries}) retryable=${retryable}: ${message}`,
+                );
+                if (!retryable || attempt >= this.maxRetries) {
+                    throw err;
+                }
+            }
+        }
+        throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    }
+
     /**
      * Upload audio file to AssemblyAI and get upload URL
      */
     private async uploadAudio(audioPath: string): Promise<string> {
         this.logger.log(`[AssemblyAI] Uploading audio file: ${audioPath}`);
 
-        const fileStream = fs.createReadStream(audioPath);
         const stats = fs.statSync(audioPath);
 
         try {
-            const response = await axios.post(
-                `${this.baseUrl}/upload`,
-                fileStream,
-                {
-                    headers: {
-                        'Authorization': this.apiKey,
-                        'Content-Type': 'application/octet-stream',
-                        'Content-Length': stats.size.toString(),
-                    },
-                    maxContentLength: Infinity,
-                    maxBodyLength: Infinity,
-                }
-            );
+            const response = await this.withRetry('Upload audio', async () => {
+                // New stream per attempt (streams are single-use).
+                const fileStream = fs.createReadStream(audioPath);
+                return axios.post(
+                    `${this.baseUrl}/upload`,
+                    fileStream,
+                    {
+                        headers: {
+                            'Authorization': this.apiKey,
+                            'Content-Type': 'application/octet-stream',
+                            'Content-Length': stats.size.toString(),
+                        },
+                        maxContentLength: Infinity,
+                        maxBodyLength: Infinity,
+                    }
+                );
+            });
 
             const uploadUrl = response.data.upload_url;
             this.logger.log(`[AssemblyAI] Audio uploaded successfully: ${uploadUrl}`);
@@ -51,35 +102,45 @@ export class AssemblyAIService {
     }
 
     /**
-     * Submit transcription request to AssemblyAI
+     * Submit transcription request to AssemblyAI.
+     * When languageCode is omitted or empty, uses automatic language detection.
      */
-    private async submitTranscription(audioUrl: string, languageCode: string = 'ko'): Promise<string> {
-        this.logger.log(`[AssemblyAI] Submitting transcription request (language: ${languageCode})`);
+    private async submitTranscription(audioUrl: string, languageCode?: string | null): Promise<string> {
+        const useAutoLanguage = !languageCode || languageCode.trim() === '';
+        this.logger.log(`[AssemblyAI] Submitting transcription request (language: ${useAutoLanguage ? 'auto-detect' : languageCode})`);
 
         try {
-            const response = await axios.post(
-                `${this.baseUrl}/transcript`,
-                {
-                    audio_url: audioUrl,
-                    language_code: languageCode,
-                    punctuate: true,
-                    format_text: true,
-                    // Disable expensive features we don't need
-                    auto_chapters: false,
-                    auto_highlights: false,
-                    content_safety: false,
-                    entity_detection: false,
-                    iab_categories: false,
-                    sentiment_analysis: false,
-                    summarization: false,
-                    speaker_labels: false,
-                },
-                {
-                    headers: {
-                        'Authorization': this.apiKey,
-                        'Content-Type': 'application/json',
-                    },
-                }
+            const body: Record<string, any> = {
+                audio_url: audioUrl,
+                punctuate: true,
+                format_text: true,
+                // Disable expensive features we don't need
+                auto_chapters: false,
+                auto_highlights: false,
+                content_safety: false,
+                entity_detection: false,
+                iab_categories: false,
+                sentiment_analysis: false,
+                summarization: false,
+                speaker_labels: false,
+            };
+            if (useAutoLanguage) {
+                body.language_detection = true;
+            } else {
+                body.language_code = languageCode!.trim();
+            }
+
+            const response = await this.withRetry('Submit transcription', async () =>
+                axios.post(
+                    `${this.baseUrl}/transcript`,
+                    body,
+                    {
+                        headers: {
+                            'Authorization': this.apiKey,
+                            'Content-Type': 'application/json',
+                        },
+                    }
+                )
             );
 
             const transcriptId = response.data.id;
@@ -99,13 +160,15 @@ export class AssemblyAIService {
 
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
             try {
-                const response = await axios.get(
-                    `${this.baseUrl}/transcript/${transcriptId}`,
-                    {
-                        headers: {
-                            'Authorization': this.apiKey,
-                        },
-                    }
+                const response = await this.withRetry('Poll transcription status', async () =>
+                    axios.get(
+                        `${this.baseUrl}/transcript/${transcriptId}`,
+                        {
+                            headers: {
+                                'Authorization': this.apiKey,
+                            },
+                        }
+                    )
                 );
 
                 const status = response.data.status;
@@ -194,16 +257,17 @@ export class AssemblyAIService {
     }
 
     /**
-     * Main transcription method
+     * Main transcription method.
+     * @param languageCode Optional. If omitted or empty, AssemblyAI will auto-detect the language.
      */
-    async transcribe(audioPath: string, languageCode: string = 'ko'): Promise<{ whisperFormat: any; transcriptId: string }> {
+    async transcribe(audioPath: string, languageCode?: string | null): Promise<{ whisperFormat: any; transcriptId: string }> {
         this.logger.log(`[AssemblyAI] Starting transcription for: ${audioPath}`);
 
         try {
             // Step 1: Upload audio
             const uploadUrl = await this.uploadAudio(audioPath);
 
-            // Step 2: Submit transcription
+            // Step 2: Submit transcription (auto-detect language when languageCode not provided)
             const transcriptId = await this.submitTranscription(uploadUrl, languageCode);
 
             // Step 3: Poll for completion

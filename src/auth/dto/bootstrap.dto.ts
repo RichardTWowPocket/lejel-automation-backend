@@ -1,6 +1,7 @@
 import { IsEmail, IsString, MinLength } from 'class-validator';
 
-export class RegisterDto {
+/** First admin when database is empty; requires X-Bootstrap-Secret header. */
+export class BootstrapDto {
   @IsEmail()
   email: string;
 
