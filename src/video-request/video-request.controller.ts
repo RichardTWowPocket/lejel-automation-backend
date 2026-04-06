@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -86,6 +87,39 @@ export class VideoRequestController {
     @Body() dto: UpdateVideoRequestDto,
   ) {
     return this.videoRequestService.update(id, user.id, dto);
+  }
+
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard)
+  async remove(
+    @ReqUser() user: { id: string; role?: 'user' | 'admin' },
+    @Param('id') id: string,
+  ) {
+    return this.videoRequestService.remove(id, user.id, {
+      isAdmin: user.role === 'admin',
+    });
+  }
+
+  @Post(':id/stop')
+  @UseGuards(JwtAuthGuard)
+  async stop(
+    @ReqUser() user: { id: string; role?: 'user' | 'admin' },
+    @Param('id') id: string,
+  ) {
+    return this.videoRequestService.stopRequest(id, user.id, {
+      isAdmin: user.role === 'admin',
+    });
+  }
+
+  @Post(':id/retry')
+  @UseGuards(JwtAuthGuard)
+  async retry(
+    @ReqUser() user: { id: string; role?: 'user' | 'admin' },
+    @Param('id') id: string,
+  ) {
+    return this.videoRequestService.retryFailed(id, user.id, {
+      isAdmin: user.role === 'admin',
+    });
   }
 
   @Post(':id/callback')

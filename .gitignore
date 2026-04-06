@@ -49,6 +49,10 @@ coverage/
 
 public/media/
 
+# Generated per-request video pipeline output (keep directory only)
+public/requests/*
+!public/requests/.gitkeep
+
 
 
 

@@ -20,7 +20,6 @@ import { OAuthService } from './oauth.service';
 import { GoogleClientService } from './google-client.service';
 import { YouTubeService } from './youtube.service';
 import { AdminGuard } from '../auth/admin.guard';
-import { ApiKeyGuard } from '../auth/api-key.guard';
 import { ApiKeyOrJwtGuard } from '../auth/api-key-or-jwt.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { decodeState } from './oauth-state';
@@ -211,11 +210,11 @@ export class OAuthController {
   }
 
   /**
-   * Upload a video to YouTube. Requires API key.
+   * Upload a video to YouTube. Requires JWT (dashboard) or API key.
    * Pass connectionId to use a specific connection, or omit to use the first connected one.
    */
   @Post('youtube/upload')
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(ApiKeyOrJwtGuard)
   async uploadToYouTube(
     @Body('videoUrl') videoUrl: string,
     @Body('title') title: string,

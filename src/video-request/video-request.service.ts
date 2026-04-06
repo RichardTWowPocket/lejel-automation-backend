@@ -72,6 +72,8 @@ export class VideoRequestService {
       profileId: vr.profileId || undefined,
       imageModel: vr.imageModel || undefined,
       videoModel: vr.videoModel || undefined,
+      topHeadlineText: vr.topHeadlineText || undefined,
+      bottomHeadlineText: vr.bottomHeadlineText || undefined,
       finalUrl: vr.finalUrl || undefined,
       debugMetaUrl: vr.debugMetaUrl || undefined,
       youtubeUrl: vr.youtubeUrl || undefined,
@@ -109,6 +111,8 @@ export class VideoRequestService {
       profileId: dto.profileId || null,
       imageModel: dto.imageModel || null,
       videoModel: dto.videoModel || null,
+      topHeadlineText: dto.topHeadlineText?.trim() ? dto.topHeadlineText.trim() : null,
+      bottomHeadlineText: dto.bottomHeadlineText?.trim() ? dto.bottomHeadlineText.trim() : null,
       status: 'pending',
       submittedAt: new Date(),
       youtubeUploadMode,
@@ -119,17 +123,60 @@ export class VideoRequestService {
       youtubePrivacyStatus: dto.youtubePrivacyStatus || 'private',
     });
     const saved = await this.videoRequestRepository.save(request);
+    await this.enqueueGenerationJob(saved.id);
+    return saved;
+  }
+
+  /** Queue video pipeline; optional automationRunId for run log updates in the processor. */
+  async enqueueGenerationJob(
+    requestId: string,
+    options?: { resume?: boolean; automationRunId?: string },
+  ): Promise<void> {
     await this.videoGenerationQueue.add(
       VIDEO_GENERATION_JOB,
-      { requestId: saved.id },
+      {
+        requestId,
+        resume: options?.resume === true,
+        automationRunId: options?.automationRunId,
+      },
       {
         attempts: 2,
         removeOnComplete: 1000,
         removeOnFail: 1000,
       },
     );
+  }
 
-    return saved;
+  /**
+   * Re-queue a failed request. Pipeline runs with resume=true: reuse existing MP3 + transcript when present,
+   * skip segment-N.mp4 files that already exist, regenerate the rest.
+   */
+  async retryFailed(id: string, userId: string, options?: { isAdmin?: boolean }) {
+    const request = await this.videoRequestRepository.findOne({
+      where: { id },
+      relations: ['user'],
+    });
+    if (!request) {
+      throw new NotFoundException('Video request not found');
+    }
+    const isAdmin = options?.isAdmin === true;
+    if (!isAdmin && request.userId !== userId) {
+      throw new ForbiddenException('Not allowed to access this request');
+    }
+    if (request.status !== 'failed') {
+      throw new BadRequestException('Only failed requests can be retried');
+    }
+
+    await this.videoRequestRepository.update(id, {
+      status: 'pending',
+      errorMessage: null,
+      completedAt: null,
+    });
+
+    await this.enqueueGenerationJob(id, { resume: true });
+
+    const updated = await this.getEntityById(id);
+    return this.toResponse(updated);
   }
 
   async getEntityById(id: string): Promise<VideoRequest> {
@@ -156,9 +203,64 @@ export class VideoRequestService {
     });
   }
 
+  /**
+   * After a render finishes with resultUrl: pending_approval → status update; direct → upload to YouTube.
+   * Idempotent if youtubeVideoId already set. Used by the Bull worker and external callback.
+   */
+  async finalizeYoutubeAfterRender(requestId: string, resultUrl: string): Promise<void> {
+    if (!resultUrl?.trim()) return;
+    const request = await this.videoRequestRepository.findOne({ where: { id: requestId } });
+    if (!request?.connectionId) return;
+    if (request.youtubeVideoId) return;
+
+    if (request.youtubeUploadMode === 'pending_approval') {
+      await this.videoRequestRepository.update(requestId, {
+        status: 'pending_youtube_approval',
+      });
+      return;
+    }
+
+    if (request.youtubeUploadMode !== 'direct') return;
+
+    try {
+      const videoId = await this.youTubeService.uploadVideoFromUrl(
+        resultUrl,
+        {
+          title:
+            request.youtubeTitle ||
+            request.fullScript.slice(0, 90) ||
+            `Video request ${request.id}`,
+          description: request.youtubeDescription || '',
+          tags: request.youtubeTags || [],
+          privacyStatus: request.youtubePrivacyStatus || 'private',
+        },
+        './temp',
+        request.connectionId,
+      );
+      await this.videoRequestRepository.update(requestId, {
+        youtubeVideoId: videoId,
+        youtubeUrl: `https://www.youtube.com/watch?v=${videoId}`,
+        youtubeErrorMessage: null,
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await this.videoRequestRepository.update(requestId, {
+        youtubeErrorMessage: msg,
+      });
+    }
+  }
+
   async markFailed(id: string, message: string): Promise<void> {
     await this.videoRequestRepository.update(id, {
       status: 'failed',
+      completedAt: new Date(),
+      errorMessage: message,
+    });
+  }
+
+  async markCancelled(id: string, message = 'Cancelled by user'): Promise<void> {
+    await this.videoRequestRepository.update(id, {
+      status: 'cancelled',
       completedAt: new Date(),
       errorMessage: message,
     });
@@ -234,7 +336,14 @@ export class VideoRequestService {
       Array<{ index: number; text: string; start: number; end: number; duration: number }>
     >(path.join(metaDir, 'segment-timing.json')) || [];
     const mediaPlan = this.readJsonSafe<
-      Array<{ index: number; mediaType: 'image' | 'video'; prompt?: string; imageModel?: string; videoModel?: string }>
+      Array<{
+        index: number;
+        mediaType: 'image' | 'video';
+        prompt?: string;
+        promptUsed?: string | null;
+        imageModel?: string;
+        videoModel?: string;
+      }>
     >(path.join(metaDir, 'media-plan.json')) || [];
 
     const toUrl = (subdir: string, filename: string) =>
@@ -270,7 +379,7 @@ export class VideoRequestService {
         text,
         timing: timing || null,
         mediaType: plan?.mediaType || null,
-        prompt: plan?.prompt || null,
+        prompt: plan?.promptUsed || plan?.prompt || null,
         imageModel: plan?.imageModel || null,
         videoModel: plan?.videoModel || null,
         imageUrls: imageCandidates.map((f) => toUrl('segments', f)),
@@ -336,6 +445,67 @@ export class VideoRequestService {
     return request;
   }
 
+  async remove(id: string, userId: string, options?: { isAdmin?: boolean }) {
+    const request = await this.videoRequestRepository.findOne({ where: { id } });
+    if (!request) {
+      throw new NotFoundException('Video request not found');
+    }
+    const isAdmin = options?.isAdmin === true;
+    if (!isAdmin && request.userId !== userId) {
+      throw new ForbiddenException('Not allowed to delete this request');
+    }
+
+    await this.videoRequestRepository.delete({ id });
+
+    const requestDir = this.requestFsService.getRequestDir(id);
+    try {
+      if (fs.existsSync(requestDir)) {
+        fs.rmSync(requestDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Deleting DB row is primary; artifact cleanup is best-effort.
+    }
+
+    return { deleted: true, id };
+  }
+
+  async stopRequest(id: string, userId: string, options?: { isAdmin?: boolean }) {
+    const request = await this.videoRequestRepository.findOne({ where: { id } });
+    if (!request) {
+      throw new NotFoundException('Video request not found');
+    }
+    const isAdmin = options?.isAdmin === true;
+    if (!isAdmin && request.userId !== userId) {
+      throw new ForbiddenException('Not allowed to stop this request');
+    }
+    if (!['pending', 'processing'].includes(request.status)) {
+      throw new BadRequestException('Only pending/processing requests can be stopped');
+    }
+
+    await this.markCancelled(id);
+
+    // Best-effort: remove queued jobs for this request so it won't restart.
+    try {
+      const jobs = await this.videoGenerationQueue.getJobs([
+        'waiting',
+        'delayed',
+        'prioritized',
+        'paused',
+      ]);
+      for (const job of jobs) {
+        if (job?.name !== VIDEO_GENERATION_JOB) continue;
+        if (job.data?.requestId === id) {
+          await job.remove();
+        }
+      }
+    } catch {
+      // ignore queue cleanup failure; status is already cancelled
+    }
+
+    const updated = await this.getEntityById(id);
+    return this.toResponse(updated);
+  }
+
   async handleCallback(
     id: string,
     secret: string,
@@ -360,31 +530,12 @@ export class VideoRequestService {
       if (errorMessage) update.errorMessage = errorMessage;
     }
 
-    if (status === 'completed' && resultUrl && request.connectionId) {
-      if (request.youtubeUploadMode === 'pending_approval') {
-        update.status = 'pending_youtube_approval';
-      } else if (request.youtubeUploadMode === 'direct') {
-        const videoId = await this.youTubeService.uploadVideoFromUrl(
-          resultUrl,
-          {
-            title:
-              request.youtubeTitle ||
-              request.fullScript.slice(0, 90) ||
-              `Video request ${request.id}`,
-            description: request.youtubeDescription || '',
-            tags: request.youtubeTags || [],
-            privacyStatus: request.youtubePrivacyStatus || 'private',
-          },
-          './temp',
-          request.connectionId,
-        );
-        update.youtubeVideoId = videoId;
-        update.youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
-        update.youtubeErrorMessage = null;
-      }
+    await this.videoRequestRepository.update(id, update);
+
+    if (status === 'completed' && resultUrl) {
+      await this.finalizeYoutubeAfterRender(id, resultUrl);
     }
 
-    await this.videoRequestRepository.update(id, update);
     return { ok: true };
   }
 

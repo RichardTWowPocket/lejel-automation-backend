@@ -85,12 +85,30 @@ export class ProfileService {
   }
 
   private normalizeProfile(profile: VideoProfile): VideoProfile {
+    const n = (v: unknown) => Number(v) || 0;
     return {
       ...profile,
       content: {
         ...profile.content,
-        xOffset: profile.content?.xOffset ?? 0,
-        yOffset: profile.content?.yOffset ?? 0,
+        xOffset: n(profile.content?.xOffset),
+        yOffset: n(profile.content?.yOffset),
+      },
+      subtitle: {
+        ...profile.subtitle,
+        xOffset: n(profile.subtitle?.xOffset),
+        yOffset: n(profile.subtitle?.yOffset),
+      },
+      headline: {
+        top: {
+          ...profile.headline.top,
+          xOffset: n(profile.headline.top?.xOffset),
+          yOffset: n(profile.headline.top?.yOffset),
+        },
+        bottom: {
+          ...profile.headline.bottom,
+          xOffset: n(profile.headline.bottom?.xOffset),
+          yOffset: n(profile.headline.bottom?.yOffset),
+        },
       },
     };
   }

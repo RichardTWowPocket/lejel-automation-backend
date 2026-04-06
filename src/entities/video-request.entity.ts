@@ -16,6 +16,7 @@ export type VideoRequestStatus =
   | 'processing'
   | 'completed'
   | 'failed'
+  | 'cancelled'
   | 'pending_youtube_approval';
 
 @Entity('video_requests')
@@ -50,6 +51,14 @@ export class VideoRequest {
 
   @Column({ type: 'varchar', length: 128, nullable: true })
   profileId: string | null;
+
+  /** User-provided burn-in text when profile has top headline enabled; null = derive from script in pipeline */
+  @Column('text', { nullable: true })
+  topHeadlineText: string | null;
+
+  /** User-provided burn-in text when profile has bottom headline enabled; null = use profile name in pipeline */
+  @Column('text', { nullable: true })
+  bottomHeadlineText: string | null;
 
   @Column({ type: 'varchar', length: 64, nullable: true })
   imageModel: string | null;

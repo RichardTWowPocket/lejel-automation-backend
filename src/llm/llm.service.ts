@@ -42,75 +42,155 @@ export class LlmService {
   private buildPrompt(script: string): string {
     return [
       'Split the following script into speaking segments for TTS-driven video generation.',
+      'Use semantic and pacing boundaries (ideas, beats, natural pauses). Do NOT split only on every sentence boundary if that yields awkward cuts.',
       'Rules:',
-      '- each segment should be around 1-2 sentences',
-      '- each segment should be roughly 6-12 seconds in spoken duration',
-      '- keep original language and meaning',
-      '- do not add commentary',
-      'Return ONLY valid JSON array of strings.',
+      '- each segment is one coherent spoken unit (often 1-2 short sentences, or a tight list clause)',
+      '- aim for roughly 6-14 seconds of speech per segment when read aloud',
+      '- preserve original language, wording, and order; do not summarize or add commentary',
+      '- output must be a JSON array of strings only, no markdown fences',
+      '',
+      'Return ONLY a valid JSON array of strings, for example: ["segment one text", "segment two text"]',
       '',
       script,
     ].join('\n');
   }
 
-  private extractTextFromResponse(model: SupportedLlmModel, data: any): string {
-    if (model === 'gpt-5-4') {
-      return (
-        data?.output
-          ?.flatMap((item: any) => item?.content ?? [])
-          ?.filter((content: any) =>
-            content?.type === 'output_text' || content?.type === 'text',
-          )
-          ?.map((content: any) => content?.text ?? '')
-          ?.join('\n')
-          ?.trim() ?? ''
-      );
-    }
-
-    if (model === 'gpt-5-2') {
-      const content = data?.choices?.[0]?.message?.content;
-      if (typeof content === 'string') return content.trim();
-      if (Array.isArray(content)) {
-        return content
-          .map((c: any) => c?.text || '')
-          .join('\n')
-          .trim();
+  private parseSegmentsFromLlmOutput(outputText: string): string[] | null {
+    const stripped = outputText.replace(/```json\s*|```/gi, '').trim();
+    const tryParse = (raw: string): string[] | null => {
+      try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return null;
+        const segments = parsed
+          .map((s) => (typeof s === 'string' ? s.trim() : ''))
+          .filter(Boolean);
+        return segments.length > 0 ? segments : null;
+      } catch {
+        return null;
       }
+    };
+    const direct = tryParse(stripped);
+    if (direct) return direct;
+    const bracket = stripped.match(/\[[\s\S]*\]/);
+    if (bracket) return tryParse(bracket[0]);
+    return null;
+  }
+
+  /** Normalize OpenAI-style message.content (string or part array). */
+  private flattenMessageContent(content: unknown): string {
+    if (typeof content === 'string') return content.trim();
+    if (!Array.isArray(content)) return '';
+    return content
+      .map((c: any) => {
+        if (typeof c === 'string') return c;
+        return c?.text ?? c?.content ?? '';
+      })
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+  }
+
+  /** Kie /codex/v1/responses and similar “output steps” shapes. */
+  private extractFromCodexOutput(data: any): string {
+    const output = data?.output;
+    if (typeof output === 'string') return output.trim();
+    if (!Array.isArray(output)) return '';
+
+    const lines: string[] = [];
+    for (const item of output) {
+      const parts = item?.content;
+      if (typeof parts === 'string') {
+        lines.push(parts);
+        continue;
+      }
+      if (!Array.isArray(parts)) continue;
+      for (const block of parts) {
+        const t =
+          block?.text ??
+          block?.output_text ??
+          (typeof block === 'string' ? block : '');
+        const type = block?.type;
+        if (typeof t === 'string' && t.trim()) {
+          if (!type || type === 'output_text' || type === 'text' || type === 'input_text') {
+            lines.push(t.trim());
+          }
+        }
+      }
+    }
+    return lines.join('\n').trim();
+  }
+
+  /**
+   * Kie.ai response JSON varies by route. Try several shapes so we do not return '' when the API succeeded.
+   * Many routes wrap the provider body in `{ code, msg, data }`.
+   */
+  private extractTextFromResponse(model: SupportedLlmModel, data: any): string {
+    if (!data || typeof data !== 'object') return '';
+
+    if (typeof data.code === 'number' && data.code !== 0) {
+      this.logger.warn(
+        `Kie API business error code=${data.code} msg=${String(data.msg ?? '').slice(0, 300)}`,
+      );
       return '';
     }
 
-    if (model === 'claude-sonnet-4-6') {
-      const content = data?.content;
-      if (!Array.isArray(content)) return '';
-      return content
-        .map((c: any) => c?.text || '')
+    const inner = data?.data;
+    const payloads =
+      inner && typeof inner === 'object' && inner !== data ? [data, inner] : [data];
+
+    for (const payload of payloads) {
+      const t = this.extractTextFromOnePayload(model, payload);
+      if (t) return t;
+    }
+
+    this.logger.debug(
+      `[extractTextFromResponse] empty for model=${model} topKeys=${Object.keys(data).join(',')}`,
+    );
+    return '';
+  }
+
+  private extractTextFromOnePayload(model: SupportedLlmModel, data: any): string {
+    if (!data || typeof data !== 'object') return '';
+
+    // OpenAI-compatible chat.completions (many Gemini/GPT routes on Kie)
+    const choiceMsg = data?.choices?.[0]?.message;
+    const fromChoice = this.flattenMessageContent(choiceMsg?.content);
+    if (fromChoice) return fromChoice;
+    const delta = this.flattenMessageContent(data?.choices?.[0]?.delta?.content);
+    if (delta) return delta;
+
+    // Top-level string helpers some gateways use
+    if (typeof data?.text === 'string' && data.text.trim()) return data.text.trim();
+    if (typeof data?.result === 'string' && data.result.trim()) return data.result.trim();
+    if (typeof data?.output_text === 'string' && data.output_text.trim()) return data.output_text.trim();
+
+    // Anthropic-style
+    if (Array.isArray(data?.content)) {
+      const t = data.content
+        .map((c: any) => (typeof c?.text === 'string' ? c.text : typeof c === 'string' ? c : ''))
+        .filter(Boolean)
         .join('\n')
         .trim();
+      if (t) return t;
     }
 
-    if (
-      model === 'gemini-3-pro' ||
-      model === 'gemini-3.1-pro' ||
-      model === 'gemini-2.5-flash'
-    ) {
-      const content = data?.choices?.[0]?.message?.content;
-      if (typeof content === 'string') return content.trim();
-      if (Array.isArray(content)) {
-        return content
-          .map((p: any) => p?.text || '')
-          .join('\n')
-          .trim();
-      }
-      return '';
+    // Gemini generateContent
+    const parts = data?.candidates?.[0]?.content?.parts;
+    if (Array.isArray(parts)) {
+      const t = parts
+        .map((p: any) => p?.text ?? '')
+        .join('\n')
+        .trim();
+      if (t) return t;
     }
 
-    // gemini-3-flash
-    return (
-      data?.candidates?.[0]?.content?.parts
-        ?.map((p: any) => p?.text || '')
-        ?.join('\n')
-        ?.trim() ?? ''
-    );
+    // GPT-5.4 / codex “responses” shape (and similar)
+    if (model === 'gpt-5-4' || data?.output !== undefined) {
+      const fromCodex = this.extractFromCodexOutput(data);
+      if (fromCodex) return fromCodex;
+    }
+
+    return '';
   }
 
   private async callKieModel(
@@ -122,8 +202,9 @@ export class LlmService {
       'Content-Type': 'application/json',
     };
 
+    let data: any;
     if (model === 'gpt-5-4') {
-      const { data } = await axios.post(
+      const res = await axios.post(
         `${this.baseUrl}/codex/v1/responses`,
         {
           model: 'gpt-5-4',
@@ -138,11 +219,9 @@ export class LlmService {
         },
         { headers, timeout: 90000 },
       );
-      return this.extractTextFromResponse(model, data);
-    }
-
-    if (model === 'gpt-5-2') {
-      const { data } = await axios.post(
+      data = res.data;
+    } else if (model === 'gpt-5-2') {
+      const res = await axios.post(
         `${this.baseUrl}/gpt-5-2/v1/chat/completions`,
         {
           messages: [
@@ -155,11 +234,9 @@ export class LlmService {
         },
         { headers, timeout: 90000 },
       );
-      return this.extractTextFromResponse(model, data);
-    }
-
-    if (model === 'claude-sonnet-4-6') {
-      const { data } = await axios.post(
+      data = res.data;
+    } else if (model === 'claude-sonnet-4-6') {
+      const res = await axios.post(
         `${this.baseUrl}/claude/v1/messages`,
         {
           model: 'claude-sonnet-4-6',
@@ -168,15 +245,13 @@ export class LlmService {
         },
         { headers, timeout: 90000 },
       );
-      return this.extractTextFromResponse(model, data);
-    }
-
-    if (
+      data = res.data;
+    } else if (
       model === 'gemini-3-pro' ||
       model === 'gemini-3.1-pro' ||
       model === 'gemini-2.5-flash'
     ) {
-      const { data } = await axios.post(
+      const res = await axios.post(
         `${this.baseUrl}/${model}/v1/chat/completions`,
         {
           stream: false,
@@ -189,64 +264,80 @@ export class LlmService {
         },
         { headers, timeout: 90000 },
       );
-      return this.extractTextFromResponse(model, data);
-    }
-
-    const { data } = await axios.post(
-      `${this.baseUrl}/gemini/v1/models/gemini-3-flash-v1betamodels:streamGenerateContent`,
-      {
-        stream: false,
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          thinkingConfig: {
-            includeThoughts: false,
-            thinkingLevel: 'low',
+      data = res.data;
+    } else {
+      const res = await axios.post(
+        `${this.baseUrl}/gemini/v1/models/gemini-3-flash-v1betamodels:streamGenerateContent`,
+        {
+          stream: false,
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: prompt }],
+            },
+          ],
+          generationConfig: {
+            thinkingConfig: {
+              includeThoughts: false,
+              thinkingLevel: 'low',
+            },
           },
         },
-      },
-      { headers, timeout: 90000 },
-    );
-    return this.extractTextFromResponse(model, data);
+        { headers, timeout: 90000 },
+      );
+      data = res.data;
+    }
+
+    const text = this.extractTextFromResponse(model, data);
+    if (!text && data && typeof data === 'object') {
+      const keys = Object.keys(data).join(', ');
+      const errMsg =
+        typeof (data as any).msg === 'string' ? String((data as any).msg).slice(0, 200) : '';
+      this.logger.warn(
+        `Kie LLM (${model}) HTTP OK but no extractable assistant text. topLevelKeys=[${keys}]${errMsg ? ` msg=${errMsg}` : ''}`,
+      );
+    }
+    return text;
   }
 
+  /**
+   * @param useLocalFallback when true (default), sentence-split if Kie.ai fails or key missing.
+   * When false, returns [] so callers can surface an error (e.g. Generate Script in UI).
+   */
   async segmentScript(
     fullScript: string,
     model: SupportedLlmModel = 'gpt-5-4',
+    options?: { useLocalFallback?: boolean },
   ): Promise<string[]> {
+    const useLocalFallback = options?.useLocalFallback !== false;
     const script = fullScript?.trim();
     if (!script) return [];
 
     if (!this.apiKey) {
-      return this.fallbackSegment(script);
+      if (useLocalFallback) return this.fallbackSegment(script);
+      this.logger.warn('KIE_AI_API_KEY missing; strict segmentation returned empty.');
+      return [];
     }
 
     try {
       const outputText = await this.callKieModel(model, this.buildPrompt(script));
 
       if (!outputText) {
-        this.logger.warn('Kie LLM returned empty output. Using fallback segmenter.');
-        return this.fallbackSegment(script);
+        this.logger.warn('Kie LLM returned empty output.');
+        if (useLocalFallback) return this.fallbackSegment(script);
+        return [];
       }
 
-      const normalized = outputText.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(normalized);
-      if (!Array.isArray(parsed)) {
-        this.logger.warn('Kie LLM output is not an array. Using fallback segmenter.');
-        return this.fallbackSegment(script);
-      }
+      const segments = this.parseSegmentsFromLlmOutput(outputText);
+      if (segments?.length) return segments;
 
-      const segments = parsed
-        .map((s) => (typeof s === 'string' ? s.trim() : ''))
-        .filter(Boolean);
-      return segments.length > 0 ? segments : this.fallbackSegment(script);
+      this.logger.warn('Kie LLM output could not be parsed as JSON string array.');
+      if (useLocalFallback) return this.fallbackSegment(script);
+      return [];
     } catch (error: any) {
-      this.logger.warn(`Kie LLM segmentation failed, using fallback: ${error?.message}`);
-      return this.fallbackSegment(script);
+      this.logger.warn(`Kie LLM segmentation failed: ${error?.message}`);
+      if (useLocalFallback) return this.fallbackSegment(script);
+      return [];
     }
   }
 
@@ -280,5 +371,72 @@ export class LlmService {
       .map((part) => part.trim())
       .find(Boolean);
     return firstLine || 'Generated headline';
+  }
+
+  private extractSingleLinePrompt(outputText: string): string {
+    const stripped = String(outputText || '')
+      .replace(/```[\s\S]*?```/g, (m) => m.replace(/```/g, ''))
+      .trim();
+    // take first non-empty line; many models still return multi-line
+    const first = stripped
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean)[0];
+    const candidate = (first || stripped).trim();
+    return candidate.replace(/^"+|"+$/g, '').trim();
+  }
+
+  async generateImagePrompt(
+    scriptSegment: string,
+    model: SupportedLlmModel = 'gpt-5-4',
+  ): Promise<string> {
+    const seg = (scriptSegment || '').trim();
+    if (!seg) throw new Error('scriptSegment is required');
+    if (!this.apiKey) throw new Error('KIE_AI_API_KEY missing; cannot generate image prompt');
+
+    const prompt = [
+      'You are a prompt writer for a text-to-image model.',
+      'Task: write ONE concise image generation prompt based on the script segment below.',
+      'Constraints:',
+      '- cinematic, realistic, professional look',
+      '- no visible text/captions/letters/numbers/logos/watermarks/subtitles/UI',
+      '- describe subject, setting, lighting, composition, camera framing',
+      '- output ONLY the final prompt text (no explanations, no JSON, no quotes)',
+      '',
+      'Script segment:',
+      `"${seg}"`,
+    ].join('\n');
+
+    const out = await this.callKieModel(model, prompt);
+    const single = this.extractSingleLinePrompt(out);
+    if (!single) throw new Error('LLM returned empty image prompt');
+    return single;
+  }
+
+  async generateVideoPrompt(
+    scriptSegment: string,
+    model: SupportedLlmModel = 'gpt-5-4',
+  ): Promise<string> {
+    const seg = (scriptSegment || '').trim();
+    if (!seg) throw new Error('scriptSegment is required');
+    if (!this.apiKey) throw new Error('KIE_AI_API_KEY missing; cannot generate video prompt');
+
+    const prompt = [
+      'You are a prompt writer for a text-to-video model.',
+      'Task: write ONE concise video generation prompt based on the script segment below.',
+      'Constraints:',
+      '- cinematic, realistic motion, professional look',
+      '- no visible text/captions/letters/numbers/logos/watermarks/subtitles/UI',
+      '- describe action, setting, camera movement, lighting, mood',
+      '- output ONLY the final prompt text (no explanations, no JSON, no quotes)',
+      '',
+      'Script segment:',
+      `"${seg}"`,
+    ].join('\n');
+
+    const out = await this.callKieModel(model, prompt);
+    const single = this.extractSingleLinePrompt(out);
+    if (!single) throw new Error('LLM returned empty video prompt');
+    return single;
   }
 }

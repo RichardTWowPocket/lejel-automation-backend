@@ -25,6 +25,8 @@ services:
       - .env
     volumes:
       - ./temp:/app/temp
+      # Script-to-video artifacts (audio, segments, final mp4) — must persist across container rebuilds
+      - ./public/requests:/app/public/requests
       - ./public/media:/app/public/media
       - ./public/fonts/custom:/app/public/fonts/custom
       - ./profiles:/app/profiles

@@ -27,6 +27,9 @@ export class User {
   @CreateDateColumn()
   createdAt: Date;
 
+  @Column({ type: 'timestamp', nullable: true })
+  lastLoginAt: Date | null;
+
   @OneToMany(() => VideoRequest, (vr) => vr.user)
   videoRequests: VideoRequest[];
 }

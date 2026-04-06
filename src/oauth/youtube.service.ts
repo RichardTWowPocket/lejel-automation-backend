@@ -88,7 +88,24 @@ export class YouTubeService {
     credentialId?: string,
   ): Promise<string> {
     const axios = (await import('axios')).default;
-    const res = await axios.get(videoUrl, { responseType: 'arraybuffer' });
+    let res;
+    try {
+      res = await axios.get(videoUrl, {
+        responseType: 'arraybuffer',
+        timeout: 600_000,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      });
+    } catch (e: unknown) {
+      const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : String(e);
+      throw new Error(`Failed to download video from URL: ${msg}`);
+    }
+    const ct = String(res.headers['content-type'] || '').toLowerCase();
+    if (ct.includes('text/html')) {
+      throw new Error(
+        'That URL returned HTML (a web page), not a video file. Paste the direct .mp4 link from your backend, e.g. …/requests/<id>/final/final-video.mp4 (copy from the completed video request).',
+      );
+    }
     const ext = path.extname(new URL(videoUrl).pathname) || '.mp4';
     const tempPath = path.join(tempDir, `yt-upload-${Date.now()}${ext}`);
     fs.mkdirSync(tempDir, { recursive: true });

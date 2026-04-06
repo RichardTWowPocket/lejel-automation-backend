@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from '../entities/user.entity';
+import { VideoRequest } from '../entities/video-request.entity';
 import { AdminGuard } from './admin.guard';
 import { ApiKeyGuard } from './api-key.guard';
 import { ApiKeyOrJwtGuard } from './api-key-or-jwt.guard';
@@ -14,7 +15,7 @@ import { JwtStrategy } from './jwt.strategy';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, VideoRequest]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

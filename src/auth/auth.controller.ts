@@ -1,4 +1,15 @@
-import { Controller, Post, Body, Get, Patch, UseGuards, Headers } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  Patch,
+  Delete,
+  Param,
+  UseGuards,
+  Headers,
+  Query,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { AdminCreateUserDto } from './dto/admin-create-user.dto';
@@ -44,6 +55,13 @@ export class AuthController {
     return { ok: true };
   }
 
+  @Get('admin/users/recent-activity')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async listRecentActiveUsers(@Query('limit') limit?: string) {
+    const n = Math.min(Math.max(parseInt(limit || '5', 10) || 5, 1), 50);
+    return this.authService.findRecentActiveUsers(n);
+  }
+
   @Get('admin/users')
   @UseGuards(JwtAuthGuard, AdminGuard)
   async listAllUsers() {
@@ -54,5 +72,15 @@ export class AuthController {
   @UseGuards(JwtAuthGuard, AdminGuard)
   async createUser(@Body() dto: AdminCreateUserDto) {
     return this.authService.createUserByAdmin(dto);
+  }
+
+  @Delete('admin/users/:id')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async deleteUser(
+    @Param('id') id: string,
+    @ReqUser() user: { id: string },
+  ) {
+    await this.authService.deleteUserByAdmin(user.id, id);
+    return { ok: true };
   }
 }

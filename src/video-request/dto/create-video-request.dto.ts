@@ -64,12 +64,30 @@ export class CreateVideoRequestDto {
   @IsIn(['public', 'private', 'unlisted'])
   youtubePrivacyStatus?: 'public' | 'private' | 'unlisted';
 
+  /** Kie Market image model for segment stills (see kie-ai.service). */
   @IsOptional()
-  @IsString()
+  @IsIn([
+    'z-image',
+    'nano-banana-pro',
+    'google/nano-banana',
+    'flux-2/pro-text-to-image',
+    'flux-2/flex-text-to-image',
+    'grok-imagine/text-to-image',
+    'gpt-image/1.5-text-to-image',
+  ])
   imageModel?: string;
 
   @IsOptional()
-  @IsString()
+  @IsIn([
+    // Kling (current placeholder implementation)
+    'kling-v1.6',
+    'kling-v2.1-master',
+    'kling-v2.1',
+    // Kie Market (implemented via createMarketVideoTask)
+    'bytedance/v1-lite-text-to-video',
+    'wan/2-6-text-to-video',
+    'grok-imagine/image-to-video',
+  ])
   videoModel?: string;
 
   @IsOptional()
@@ -79,4 +97,14 @@ export class CreateVideoRequestDto {
   @IsOptional()
   @IsString()
   profileId?: string;
+
+  /** When profile top headline is enabled, optional override (empty = auto from script in pipeline) */
+  @IsOptional()
+  @IsString()
+  topHeadlineText?: string;
+
+  /** When profile bottom headline is enabled, optional override (empty = profile display name in pipeline) */
+  @IsOptional()
+  @IsString()
+  bottomHeadlineText?: string;
 }
