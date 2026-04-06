@@ -12,7 +12,10 @@ import { User } from './entities/user.entity';
 import { VideoRequest } from './entities/video-request.entity';
 import { GoogleClient } from './entities/google-client.entity';
 import { OAuthCredential } from './entities/oauth-credential.entity';
+import { AutomationChannel } from './entities/automation-channel.entity';
+import { AutomationRun } from './entities/automation-run.entity';
 import { OAuthModule } from './oauth/oauth.module';
+import { AutomationModule } from './automation/automation.module';
 import { LlmModule } from './llm/llm.module';
 import { ElevenLabsModule } from './elevenlabs/elevenlabs.module';
 import { KieAiModule } from './kie-ai/kie-ai.module';
@@ -40,7 +43,14 @@ import { FontsModule } from './fonts/fonts.module';
         return {
           type: 'postgres',
           url: databaseUrl,
-          entities: [User, VideoRequest, GoogleClient, OAuthCredential],
+          entities: [
+            User,
+            VideoRequest,
+            GoogleClient,
+            OAuthCredential,
+            AutomationChannel,
+            AutomationRun,
+          ],
           synchronize: true,
         };
       },
@@ -55,6 +65,7 @@ import { FontsModule } from './fonts/fonts.module';
     AuthModule,
     OAuthModule,
     VideoRequestModule,
+    AutomationModule,
     HealthModule,
     TranscriptionModule,
     LlmModule,

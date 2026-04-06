@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { VideoRequest } from '../entities/video-request.entity';
@@ -10,6 +10,7 @@ import { VideoRequestController } from './video-request.controller';
 import { VideoRequestService } from './video-request.service';
 import { VideoGenerationProcessor } from './video-generation.processor';
 import { VIDEO_GENERATION_QUEUE } from './video-request.queue';
+import { AutomationModule } from '../automation/automation.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { VIDEO_GENERATION_QUEUE } from './video-request.queue';
     OAuthModule,
     LlmModule,
     VideoModule,
+    forwardRef(() => AutomationModule),
   ],
   controllers: [VideoRequestController],
   providers: [VideoRequestService, VideoGenerationProcessor],

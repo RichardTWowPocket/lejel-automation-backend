@@ -18,6 +18,12 @@ export const SUPPORTED_LLM_MODELS = [
 ] as const;
 export type SupportedLlmModel = (typeof SUPPORTED_LLM_MODELS)[number];
 
+export type GeneratedYoutubeMetadata = {
+  title: string;
+  description: string;
+  tags: string[];
+};
+
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
@@ -39,8 +45,8 @@ export class LlmService {
     return segments.length > 0 ? segments : [fullScript.trim()].filter(Boolean);
   }
 
-  private buildPrompt(script: string): string {
-    return [
+  private buildPrompt(script: string, segmentationInstructions?: string | null): string {
+    const lines = [
       'Split the following script into speaking segments for TTS-driven video generation.',
       'Use semantic and pacing boundaries (ideas, beats, natural pauses). Do NOT split only on every sentence boundary if that yields awkward cuts.',
       'Rules:',
@@ -50,9 +56,17 @@ export class LlmService {
       '- output must be a JSON array of strings only, no markdown fences',
       '',
       'Return ONLY a valid JSON array of strings, for example: ["segment one text", "segment two text"]',
-      '',
-      script,
-    ].join('\n');
+    ];
+    const custom = segmentationInstructions?.trim();
+    if (custom) {
+      lines.push(
+        '',
+        'Additional segmentation instructions (follow these together with the rules above; still output ONLY the JSON array, no markdown):',
+        custom,
+      );
+    }
+    lines.push('', script);
+    return lines.join('\n');
   }
 
   private parseSegmentsFromLlmOutput(outputText: string): string[] | null {
@@ -307,7 +321,7 @@ export class LlmService {
   async segmentScript(
     fullScript: string,
     model: SupportedLlmModel = 'gpt-5-4',
-    options?: { useLocalFallback?: boolean },
+    options?: { useLocalFallback?: boolean; segmentationInstructions?: string | null },
   ): Promise<string[]> {
     const useLocalFallback = options?.useLocalFallback !== false;
     const script = fullScript?.trim();
@@ -320,7 +334,10 @@ export class LlmService {
     }
 
     try {
-      const outputText = await this.callKieModel(model, this.buildPrompt(script));
+      const outputText = await this.callKieModel(
+        model,
+        this.buildPrompt(script, options?.segmentationInstructions),
+      );
 
       if (!outputText) {
         this.logger.warn('Kie LLM returned empty output.');
@@ -438,5 +455,109 @@ export class LlmService {
     const single = this.extractSingleLinePrompt(out);
     if (!single) throw new Error('LLM returned empty video prompt');
     return single;
+  }
+
+  private parseYoutubeMetadataJson(outputText: string): GeneratedYoutubeMetadata | null {
+    const stripped = outputText.replace(/```json\s*|```/gi, '').trim();
+    const tryParse = (raw: string): GeneratedYoutubeMetadata | null => {
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!parsed || typeof parsed !== 'object') return null;
+        const o = parsed as Record<string, unknown>;
+        const title = typeof o.title === 'string' ? o.title.trim() : '';
+        const description = typeof o.description === 'string' ? o.description.trim() : '';
+        const tagsRaw = o.tags;
+        const tags: string[] = [];
+        if (Array.isArray(tagsRaw)) {
+          for (const t of tagsRaw) {
+            if (typeof t === 'string' && t.trim()) tags.push(t.trim());
+          }
+        }
+        if (!title) return null;
+        return { title, description, tags };
+      } catch {
+        return null;
+      }
+    };
+    const direct = tryParse(stripped);
+    if (direct) return direct;
+    const brace = stripped.match(/\{[\s\S]*\}/);
+    if (brace) return tryParse(brace[0]);
+    return null;
+  }
+
+  private clampYoutubeMetadata(meta: GeneratedYoutubeMetadata): GeneratedYoutubeMetadata {
+    return {
+      title: meta.title.replace(/\s+/g, ' ').trim().slice(0, 100),
+      description: meta.description.trim().slice(0, 4800),
+      tags: meta.tags.slice(0, 15).map((t) => t.replace(/^#+/, '').trim().slice(0, 48)),
+    };
+  }
+
+  /**
+   * Single LLM call: title, description, tags for YouTube. Returns null on failure (caller should fallback).
+   */
+  async generateYoutubeMetadata(params: {
+    fullScript: string;
+    webhookTitle: string | null;
+    titleInstructions: string;
+    descriptionInstructions: string;
+    tagsInstructions: string;
+    model: SupportedLlmModel;
+  }): Promise<GeneratedYoutubeMetadata | null> {
+    const script = params.fullScript?.trim();
+    if (!script) return null;
+    if (!this.apiKey) {
+      this.logger.warn('KIE_AI_API_KEY missing; cannot generate YouTube metadata');
+      return null;
+    }
+
+    const header = [
+      'You produce metadata for a YouTube upload (e.g. Shorts). Reply with ONLY valid JSON, no markdown fences.',
+      'Schema: {"title":"string","description":"string","tags":["string",...]}',
+      'Hard limits:',
+      '- title: max 100 characters, single line, no hashtags, engaging and accurate.',
+      '- description: max 4800 characters; summarize what the video is about; plain text.',
+      '- tags: 5-12 short tags (words or short phrases), no # character.',
+      '- Use the same language as the script unless the instructions below say otherwise.',
+    ].join('\n');
+
+    const ctx = params.webhookTitle
+      ? `Headline from the publisher (context, optional to use): "${params.webhookTitle}"\n\n`
+      : '';
+
+    const userBlock = [
+      '--- Title instructions ---',
+      params.titleInstructions.trim() ||
+        'Write a clear, clickable YouTube title for this video.',
+      '',
+      '--- Description instructions ---',
+      params.descriptionInstructions.trim() ||
+        'Write a viewer-friendly description summarizing the video.',
+      '',
+      '--- Tags instructions ---',
+      params.tagsInstructions.trim() ||
+        'Suggest relevant YouTube search tags.',
+      '',
+      '--- Video script (full) ---',
+      script,
+    ].join('\n');
+
+    const prompt = `${header}\n\n${ctx}${userBlock}`;
+
+    try {
+      const outputText = await this.callKieModel(params.model, prompt);
+      if (!outputText) return null;
+      const parsed = this.parseYoutubeMetadataJson(outputText);
+      if (!parsed) {
+        this.logger.warn('YouTube metadata LLM output could not be parsed as JSON');
+        return null;
+      }
+      return this.clampYoutubeMetadata(parsed);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`YouTube metadata LLM failed: ${msg}`);
+      return null;
+    }
   }
 }

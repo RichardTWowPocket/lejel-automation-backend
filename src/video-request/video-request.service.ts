@@ -84,7 +84,11 @@ export class VideoRequestService {
     };
   }
 
-  async create(userId: string, dto: CreateVideoRequestDto): Promise<VideoRequest> {
+  async create(
+    userId: string,
+    dto: CreateVideoRequestDto,
+    queueOpts?: { automationRunId?: string },
+  ): Promise<VideoRequest> {
     const model = (dto.model || 'gpt-5-4') as SupportedLlmModel;
     const segmentedScripts =
       dto.segmentedScripts && dto.segmentedScripts.length > 0
@@ -123,7 +127,9 @@ export class VideoRequestService {
       youtubePrivacyStatus: dto.youtubePrivacyStatus || 'private',
     });
     const saved = await this.videoRequestRepository.save(request);
-    await this.enqueueGenerationJob(saved.id);
+    await this.enqueueGenerationJob(saved.id, {
+      automationRunId: queueOpts?.automationRunId,
+    });
     return saved;
   }
 
