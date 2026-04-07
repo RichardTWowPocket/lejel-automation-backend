@@ -5,6 +5,7 @@ import { AutomationRun } from '../entities/automation-run.entity';
 import { OAuthCredential } from '../entities/oauth-credential.entity';
 import { User } from '../entities/user.entity';
 import { LlmModule } from '../llm/llm.module';
+import { ProfileModule } from '../profile/profile.module';
 import { VideoRequestModule } from '../video-request/video-request.module';
 import { AutomationService } from './automation.service';
 import { AutomationAdminController } from './automation-admin.controller';
@@ -20,6 +21,7 @@ import { AutomationWebhookController } from './automation-webhook.controller';
       User,
     ]),
     LlmModule,
+    ProfileModule,
     forwardRef(() => VideoRequestModule),
   ],
   controllers: [AutomationAdminController, AutomationRunsController, AutomationWebhookController],

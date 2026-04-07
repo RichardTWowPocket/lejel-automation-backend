@@ -14,12 +14,12 @@
   },
   "subtitle": {
     "enabled": true,
-    "font": "Noto Sans CJK KR",
-    "fontSize": 48,
+    "font": "Hakgyoansim Jiugae",
+    "fontSize": 72,
     "fontColor": "#FFFFFF",
     "highlightColor": "#C20000",
     "outlineColor": "#000000",
-    "outlineWidth": 7,
+    "outlineWidth": 3,
     "background": false,
     "backColor": "#000000",
     "alignment": 5,
@@ -33,11 +33,11 @@
     "top": {
       "enabled": true,
       "font": "Hakgyoansim Jiugae",
-      "fontSize": 72,
-      "fontColor": "#C20000",
+      "fontSize": 92,
+      "fontColor": "#FFFFFF",
       "highlightColor": "#FF0000",
-      "outlineColor": "#FFFFFF",
-      "outlineWidth": 7,
+      "outlineColor": "#000000",
+      "outlineWidth": 5,
       "background": false,
       "backColor": "#000000",
       "alignment": 8,
@@ -62,5 +62,9 @@
       "bold": false,
       "italic": false
     }
+  },
+  "sampleTexts": {
+    "topHeadline": "네이버와 <h>EBS</h>의",
+    "subtitle": "네이버와 EBS의"
   }
 }

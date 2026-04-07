@@ -110,6 +110,23 @@ export class HeadlineConfigDto {
   bottom: TextStyleConfigDto;
 }
 
+export class ProfileSampleTextsDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  topHeadline?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  bottomHeadline?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  subtitle?: string;
+}
+
 export class CreateProfileDto {
   @IsString()
   @IsNotEmpty()
@@ -143,4 +160,9 @@ export class CreateProfileDto {
   @ValidateNested()
   @Type(() => HeadlineConfigDto)
   headline: HeadlineConfigDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ProfileSampleTextsDto)
+  sampleTexts?: ProfileSampleTextsDto;
 }

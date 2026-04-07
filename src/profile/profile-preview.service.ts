@@ -7,6 +7,11 @@ import * as path from 'path';
 import { resolveDimensions } from './profile-dimensions';
 import { RenderProfilePreviewDto } from './dto/render-profile-preview.dto';
 import { TextStyleConfigDto } from './dto/create-profile.dto';
+import type { TextStyleConfig } from '../video/types/profile-config.interface';
+import {
+  headlineHasHighlightTags,
+  writeHeadlineHighlightAssFile,
+} from '../video/headline-highlight-ass';
 
 @Injectable()
 export class ProfilePreviewService {
@@ -127,10 +132,15 @@ export class ProfilePreviewService {
     return undefined;
   }
 
+  private assPathForFilter(absPath: string): string {
+    return absPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  }
+
   async renderPreview(dto: RenderProfilePreviewDto): Promise<string> {
     const canvas = resolveDimensions(dto.canvas.ratio as any, dto.canvas.resolution as any);
     const content = resolveDimensions(dto.content.ratio as any, dto.content.resolution as any);
     const outFile = path.join(os.tmpdir(), `profile-preview-${Date.now()}.jpg`);
+    const tempAssFiles: string[] = [];
 
     const contentX = Math.round((canvas.width - content.width) / 2 + dto.content.xOffset);
     const contentY = Math.round((canvas.height - content.height) / 2 + dto.content.yOffset);
@@ -143,8 +153,25 @@ export class ProfilePreviewService {
     const subText = dto.subtitleText ?? 'Subtitle baseline';
     const botText = dto.bottomHeadlineText ?? 'Bottom headline';
 
-    const pushText = (style: TextStyleConfigDto, text: string) => {
+    const pushText = (style: TextStyleConfigDto, text: string, useHeadlineHighlight: boolean) => {
       if (!style.enabled) return;
+
+      if (useHeadlineHighlight && headlineHasHighlightTags(text)) {
+        const assPath = path.join(
+          os.tmpdir(),
+          `profile-preview-hl-${Date.now()}-${tempAssFiles.length}.ass`,
+        );
+        tempAssFiles.push(assPath);
+        writeHeadlineHighlightAssFile(
+          style as TextStyleConfig,
+          text,
+          canvas.width,
+          canvas.height,
+          assPath,
+        );
+        chain.push(`ass='${this.assPathForFilter(assPath)}'`);
+        return;
+      }
 
       const x = this.exprX(style.alignment, style.xOffset);
       const y = this.exprY(style.alignment, style.yOffset);
@@ -177,9 +204,9 @@ export class ProfilePreviewService {
       chain.push(parts.join(':'));
     };
 
-    pushText(dto.headline.top, topText);
-    pushText(dto.subtitle, subText);
-    pushText(dto.headline.bottom, botText);
+    pushText(dto.headline.top, topText, true);
+    pushText(dto.subtitle, subText, false);
+    pushText(dto.headline.bottom, botText, true);
 
     const filterComplex = chain.join(',');
     this.logger.debug(`FFmpeg -vf: ${filterComplex}`);
@@ -199,23 +226,36 @@ export class ProfilePreviewService {
       outFile,
     ];
 
-    await new Promise<void>((resolve, reject) => {
-      const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
-      let stderr = '';
-      ff.stderr.on('data', (chunk) => {
-        stderr += String(chunk);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+        let stderr = '';
+        ff.stderr.on('data', (chunk) => {
+          stderr += String(chunk);
+        });
+        ff.on('error', reject);
+        ff.on('exit', (code) =>
+          code === 0 ? resolve() : reject(new Error(`ffmpeg failed (${code}): ${stderr.slice(-1200)}`)),
+        );
       });
-      ff.on('error', reject);
-      ff.on('exit', (code) =>
-        code === 0 ? resolve() : reject(new Error(`ffmpeg failed (${code}): ${stderr.slice(-1200)}`)),
-      );
-    }).catch((err) => {
+      const b64 = fs.readFileSync(outFile).toString('base64');
+      return `data:image/jpeg;base64,${b64}`;
+    } catch (err) {
       this.logger.error(`Preview render failed: ${String(err)}`);
       throw new InternalServerErrorException(`Preview render failed: ${String(err)}`);
-    });
-
-    const b64 = fs.readFileSync(outFile).toString('base64');
-    fs.unlinkSync(outFile);
-    return `data:image/jpeg;base64,${b64}`;
+    } finally {
+      try {
+        fs.unlinkSync(outFile);
+      } catch {
+        /* missing if ffmpeg never wrote */
+      }
+      for (const p of tempAssFiles) {
+        try {
+          fs.unlinkSync(p);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
   }
 }

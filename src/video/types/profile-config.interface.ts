@@ -34,6 +34,14 @@ export interface HeadlineConfig {
   bottom: TextStyleConfig;
 }
 
+/** Optional sample/default copy for previews and for prefilling headline fields on “new video”. */
+export interface ProfileSampleTexts {
+  topHeadline?: string;
+  bottomHeadline?: string;
+  /** Layout/preview only; rendered subtitles still follow the spoken script. */
+  subtitle?: string;
+}
+
 export interface VideoProfile {
   profileId: string;
   name: string;
@@ -42,4 +50,5 @@ export interface VideoProfile {
   content: ContentConfig;
   subtitle: SubtitleConfig;
   headline: HeadlineConfig;
+  sampleTexts?: ProfileSampleTexts;
 }

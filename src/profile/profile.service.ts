@@ -13,6 +13,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import {
   ContentConfig,
   DimensionConfig,
+  ProfileSampleTexts,
   VideoProfile,
 } from '../video/types/profile-config.interface';
 import {
@@ -84,6 +85,26 @@ export class ProfileService {
     };
   }
 
+  private normalizeSampleTexts(
+    raw?: { topHeadline?: string; bottomHeadline?: string; subtitle?: string } | null,
+  ): ProfileSampleTexts | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const trimCap = (s: unknown, max: number): string | undefined => {
+      if (typeof s !== 'string') return undefined;
+      const t = s.trim();
+      if (!t) return undefined;
+      return t.length > max ? t.slice(0, max) : t;
+    };
+    const out: ProfileSampleTexts = {};
+    const top = trimCap(raw.topHeadline, 500);
+    const bottom = trimCap(raw.bottomHeadline, 500);
+    const sub = trimCap(raw.subtitle, 2000);
+    if (top) out.topHeadline = top;
+    if (bottom) out.bottomHeadline = bottom;
+    if (sub) out.subtitle = sub;
+    return Object.keys(out).length ? out : undefined;
+  }
+
   private normalizeProfile(profile: VideoProfile): VideoProfile {
     const n = (v: unknown) => Number(v) || 0;
     return {
@@ -110,6 +131,7 @@ export class ProfileService {
           yOffset: n(profile.headline.bottom?.yOffset),
         },
       },
+      sampleTexts: this.normalizeSampleTexts(profile.sampleTexts),
     };
   }
 
@@ -165,6 +187,7 @@ export class ProfileService {
       content: this.toContentConfig(dto.content),
       subtitle: dto.subtitle,
       headline: dto.headline,
+      sampleTexts: this.normalizeSampleTexts(dto.sampleTexts),
     };
 
     await fs.promises.writeFile(
@@ -209,6 +232,9 @@ export class ProfileService {
       if (dto.headline.bottom) {
         existing.headline.bottom = { ...existing.headline.bottom, ...dto.headline.bottom };
       }
+    }
+    if (dto.sampleTexts !== undefined) {
+      existing.sampleTexts = this.normalizeSampleTexts(dto.sampleTexts);
     }
 
     const profilePath = this.resolveProfilePath(profileId);

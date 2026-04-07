@@ -16,6 +16,8 @@ import { AutomationRun } from '../entities/automation-run.entity';
 import { OAuthCredential } from '../entities/oauth-credential.entity';
 import { User } from '../entities/user.entity';
 import { LlmService, SupportedLlmModel } from '../llm/llm.service';
+import { ProfileService } from '../profile/profile.service';
+import { VideoProfile } from '../video/types/profile-config.interface';
 import { VideoRequestService } from '../video-request/video-request.service';
 import { CreateAutomationChannelDto } from './dto/create-automation-channel.dto';
 import { UpdateAutomationChannelDto } from './dto/update-automation-channel.dto';
@@ -33,6 +35,7 @@ export class AutomationService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly llmService: LlmService,
+    private readonly profileService: ProfileService,
     private readonly config: ConfigService,
     @Inject(forwardRef(() => VideoRequestService))
     private readonly videoRequestService: VideoRequestService,
@@ -58,6 +61,8 @@ export class AutomationService {
       videoModel: ch.videoModel ?? undefined,
       llmModel: ch.llmModel ?? undefined,
       scriptSegmentationPrompt: ch.scriptSegmentationPrompt ?? undefined,
+      articleToScriptEnabled: ch.articleToScriptEnabled === true,
+      articleToScriptPrompt: ch.articleToScriptPrompt ?? undefined,
       youtubePrivacyStatus: ch.youtubePrivacyStatus,
       youtubeTags: ch.youtubeTags ?? undefined,
       youtubeDescriptionTemplate: ch.youtubeDescriptionTemplate ?? undefined,
@@ -65,6 +70,11 @@ export class AutomationService {
       youtubeTitlePrompt: ch.youtubeTitlePrompt ?? undefined,
       youtubeDescriptionPrompt: ch.youtubeDescriptionPrompt ?? undefined,
       youtubeTagsPrompt: ch.youtubeTagsPrompt ?? undefined,
+      youtubeMetadataPrompt: ch.youtubeMetadataPrompt ?? undefined,
+      automationTopHeadlineEnabled: ch.automationTopHeadlineEnabled === true,
+      automationTopHeadlinePrompt: ch.automationTopHeadlinePrompt ?? undefined,
+      automationBottomHeadlineEnabled: ch.automationBottomHeadlineEnabled === true,
+      automationBottomHeadlinePrompt: ch.automationBottomHeadlinePrompt ?? undefined,
       youtubeDescriptionCta: ch.youtubeDescriptionCta ?? undefined,
       youtubeTagPrefixes: ch.youtubeTagPrefixes ?? undefined,
       enabled: ch.enabled,
@@ -182,6 +192,8 @@ export class AutomationService {
       videoModel: dto.videoModel || null,
       llmModel: dto.llmModel || null,
       scriptSegmentationPrompt: dto.scriptSegmentationPrompt?.trim() || null,
+      articleToScriptEnabled: dto.articleToScriptEnabled === true,
+      articleToScriptPrompt: dto.articleToScriptPrompt?.trim() || null,
       youtubePrivacyStatus: dto.youtubePrivacyStatus || 'private',
       youtubeTags: dto.youtubeTags?.length ? dto.youtubeTags : null,
       youtubeDescriptionTemplate: dto.youtubeDescriptionTemplate?.trim() || null,
@@ -189,6 +201,11 @@ export class AutomationService {
       youtubeTitlePrompt: dto.youtubeTitlePrompt?.trim() || null,
       youtubeDescriptionPrompt: dto.youtubeDescriptionPrompt?.trim() || null,
       youtubeTagsPrompt: dto.youtubeTagsPrompt?.trim() || null,
+      youtubeMetadataPrompt: dto.youtubeMetadataPrompt?.trim() || null,
+      automationTopHeadlineEnabled: dto.automationTopHeadlineEnabled === true,
+      automationTopHeadlinePrompt: dto.automationTopHeadlinePrompt?.trim() || null,
+      automationBottomHeadlineEnabled: dto.automationBottomHeadlineEnabled === true,
+      automationBottomHeadlinePrompt: dto.automationBottomHeadlinePrompt?.trim() || null,
       youtubeDescriptionCta: dto.youtubeDescriptionCta?.trim() || null,
       youtubeTagPrefixes: dto.youtubeTagPrefixes?.length ? dto.youtubeTagPrefixes.map((t) => t.trim()).filter(Boolean) : null,
       enabled: dto.enabled !== false,
@@ -227,6 +244,15 @@ export class AutomationService {
           ? null
           : dto.scriptSegmentationPrompt.trim() || null;
     }
+    if (dto.articleToScriptEnabled !== undefined) {
+      ch.articleToScriptEnabled = dto.articleToScriptEnabled;
+    }
+    if (dto.articleToScriptPrompt !== undefined) {
+      ch.articleToScriptPrompt =
+        dto.articleToScriptPrompt === null
+          ? null
+          : dto.articleToScriptPrompt.trim() || null;
+    }
     if (dto.youtubePrivacyStatus !== undefined) {
       ch.youtubePrivacyStatus = dto.youtubePrivacyStatus;
     }
@@ -255,6 +281,30 @@ export class AutomationService {
     if (dto.youtubeTagsPrompt !== undefined) {
       ch.youtubeTagsPrompt =
         dto.youtubeTagsPrompt === null ? null : dto.youtubeTagsPrompt.trim() || null;
+    }
+    if (dto.youtubeMetadataPrompt !== undefined) {
+      ch.youtubeMetadataPrompt =
+        dto.youtubeMetadataPrompt === null
+          ? null
+          : dto.youtubeMetadataPrompt.trim() || null;
+    }
+    if (dto.automationTopHeadlineEnabled !== undefined) {
+      ch.automationTopHeadlineEnabled = dto.automationTopHeadlineEnabled;
+    }
+    if (dto.automationTopHeadlinePrompt !== undefined) {
+      ch.automationTopHeadlinePrompt =
+        dto.automationTopHeadlinePrompt === null
+          ? null
+          : dto.automationTopHeadlinePrompt.trim() || null;
+    }
+    if (dto.automationBottomHeadlineEnabled !== undefined) {
+      ch.automationBottomHeadlineEnabled = dto.automationBottomHeadlineEnabled;
+    }
+    if (dto.automationBottomHeadlinePrompt !== undefined) {
+      ch.automationBottomHeadlinePrompt =
+        dto.automationBottomHeadlinePrompt === null
+          ? null
+          : dto.automationBottomHeadlinePrompt.trim() || null;
     }
     if (dto.youtubeDescriptionCta !== undefined) {
       ch.youtubeDescriptionCta =
@@ -352,13 +402,63 @@ export class AutomationService {
     await this.runRepo.update(savedRun.id, { status: 'segmenting' });
 
     try {
-      const fullScript = title ? `${title}\n\n${textBody}` : textBody;
       const model = (channel.llmModel || 'gpt-5-4') as SupportedLlmModel;
+      // Raw webhook fields are wire/article copy; fullScript is the narration string fed to segmentation + metadata.
+      const fallbackConcat = title ? `${title}\n\n${textBody}` : textBody;
+      let fullScript = fallbackConcat;
+      if (channel.articleToScriptEnabled) {
+        const spoken = await this.llmService.articleToSpokenScript({
+          title,
+          articleBody: textBody,
+          instructions: channel.articleToScriptPrompt?.trim() ?? '',
+          model,
+        });
+        fullScript = spoken?.trim() ? spoken.trim() : fallbackConcat;
+      }
       const segmentedScripts = await this.llmService.segmentScript(fullScript, model, {
         segmentationInstructions: channel.scriptSegmentationPrompt,
       });
       if (!segmentedScripts?.length) {
         throw new BadRequestException('Failed to generate script segments');
+      }
+
+      let videoProfile: VideoProfile | null = null;
+      const profileIdTrim = channel.profileId?.trim();
+      if (profileIdTrim) {
+        try {
+          videoProfile = await this.profileService.getProfile(profileIdTrim);
+        } catch {
+          videoProfile = null;
+        }
+      }
+
+      let topHeadlineText: string | undefined;
+      let bottomHeadlineText: string | undefined;
+      if (
+        videoProfile &&
+        channel.automationTopHeadlineEnabled &&
+        videoProfile.headline?.top?.enabled === true
+      ) {
+        const top = await this.llmService.generateAutomationTopHeadline({
+          fullScript,
+          webhookTitle: title,
+          instructions: channel.automationTopHeadlinePrompt?.trim() ?? '',
+          model,
+        });
+        if (top?.trim()) topHeadlineText = top.trim();
+      }
+      if (
+        videoProfile &&
+        channel.automationBottomHeadlineEnabled &&
+        videoProfile.headline?.bottom?.enabled === true
+      ) {
+        const bot = await this.llmService.generateAutomationBottomHeadline({
+          fullScript,
+          webhookTitle: title,
+          instructions: channel.automationBottomHeadlinePrompt?.trim() ?? '',
+          model,
+        });
+        if (bot?.trim()) bottomHeadlineText = bot.trim();
       }
 
       const metadataMode = channel.youtubeMetadataMode === 'llm' ? 'llm' : 'static';
@@ -373,6 +473,7 @@ export class AutomationService {
           titleInstructions: channel.youtubeTitlePrompt || '',
           descriptionInstructions: channel.youtubeDescriptionPrompt || '',
           tagsInstructions: channel.youtubeTagsPrompt || '',
+          unifiedMetadataInstructions: channel.youtubeMetadataPrompt,
           model,
         });
         if (meta) {
@@ -419,6 +520,8 @@ export class AutomationService {
           profileId: channel.profileId || undefined,
           imageModel: channel.imageModel || undefined,
           videoModel: channel.videoModel || undefined,
+          ...(topHeadlineText ? { topHeadlineText } : {}),
+          ...(bottomHeadlineText ? { bottomHeadlineText } : {}),
         },
         { automationRunId: savedRun.id },
       );

@@ -18,6 +18,11 @@ import {
   validateKieMarketImageModelForProfile,
   validateKieMarketVideoModelForProfile,
 } from './kie-model-profile-validation';
+import {
+  headlineHasHighlightTags,
+  stripHeadlineHighlightTags,
+  writeHeadlineHighlightAssFile,
+} from './headline-highlight-ass';
 
 /** Thrown when the user stops the request; worker exits without marking completed/failed. */
 export class VideoPipelineCancelledError extends Error {
@@ -380,94 +385,6 @@ export class ScriptToVideoService {
     const secondary = forKaraoke ? style.fontColor : style.highlightColor;
     // Margins 0: social/social-style lines use explicit \\pos(...) so underline x/y offsets apply.
     return `Style: ${styleName},${style.font},${style.fontSize},${bgr(primary)},${bgr(secondary)},${bgr(style.backColor)},${bgr(style.outlineColor)},${style.bold ? -1 : 0},${style.italic ? -1 : 0},0,0,100,100,0,0,1,${Math.max(0, style.outlineWidth)},0,${alignment},0,0,0,1`;
-  }
-
-  private headlineHasHighlightTags(s: string): boolean {
-    return /<h>[\s\S]*?<\/h>/i.test(s || '');
-  }
-
-  /** Split on `<h>…</h>` (case-insensitive); text outside tags stays primary colour. */
-  private parseHeadlineHighlightSegments(input: string): Array<{ text: string; highlight: boolean }> {
-    const s = input || '';
-    const re = /<h>([\s\S]*?)<\/h>/gi;
-    const out: Array<{ text: string; highlight: boolean }> = [];
-    let last = 0;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(s)) !== null) {
-      if (m.index > last) {
-        const plain = s.slice(last, m.index);
-        if (plain) out.push({ text: plain, highlight: false });
-      }
-      const inner = m[1] ?? '';
-      if (inner) out.push({ text: inner, highlight: true });
-      last = m.index + m[0].length;
-    }
-    if (last < s.length) {
-      const rest = s.slice(last);
-      if (rest) out.push({ text: rest, highlight: false });
-    }
-    if (out.length === 0) {
-      out.push({ text: s.replace(/<\/?h>/gi, ''), highlight: false });
-    }
-    return out;
-  }
-
-  /** Strip tags for drawtext path (plain single colour). */
-  private stripHeadlineHighlightTags(s: string): string {
-    return (s || '').replace(/<\/?h>/gi, '');
-  }
-
-  private buildHeadlineAssRichBody(
-    segments: Array<{ text: string; highlight: boolean }>,
-    style: TextStyleConfig,
-  ): string {
-    const bgr = (hex: string) => {
-      const clean = hex.replace('#', '');
-      const r = clean.slice(0, 2);
-      const g = clean.slice(2, 4);
-      const b = clean.slice(4, 6);
-      return `&H00${b}${g}${r}`;
-    };
-    const hi = bgr(style.highlightColor);
-    let buf = '';
-    for (const seg of segments) {
-      const esc = this.assEscapeTextKeepSpacing(seg.text);
-      if (!esc || !esc.trim()) continue;
-      if (seg.highlight) {
-        buf += `{\\c${hi}}${esc}{\\r}`;
-      } else {
-        buf += esc;
-      }
-    }
-    return buf;
-  }
-
-  private writeHeadlineHighlightAssFile(
-    style: TextStyleConfig,
-    rawText: string,
-    playResX: number,
-    playResY: number,
-    outPath: string,
-  ): void {
-    const segments = this.parseHeadlineHighlightSegments(rawText);
-    const posPrefix = this.assSubtitlePosPrefix(style, playResX, playResY);
-    const body = this.buildHeadlineAssRichBody(segments, style);
-    const doc = [
-      '[Script Info]',
-      'ScriptType: v4.00+',
-      `PlayResX: ${playResX}`,
-      `PlayResY: ${playResY}`,
-      '',
-      '[V4+ Styles]',
-      'Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,BackColour,OutlineColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding',
-      this.textStyleToAss(style, false, 'HeadlineHl'),
-      '',
-      '[Events]',
-      'Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text',
-      `Dialogue: 0,0:00:00.00,9:59:59.99,HeadlineHl,,0,0,0,,${posPrefix}${body}`,
-      '',
-    ].join('\n');
-    fs.writeFileSync(outPath, doc, 'utf-8');
   }
 
   private assPathForFilter(absPath: string): string {
@@ -1391,9 +1308,9 @@ export class ScriptToVideoService {
       }
     }
     if (profile.headline.top.enabled && topHeadlineText) {
-      if (this.headlineHasHighlightTags(topHeadlineText)) {
+      if (headlineHasHighlightTags(topHeadlineText)) {
         const hlAss = path.join(dirs.subtitles, `headline-top-${timestamp}.ass`);
-        this.writeHeadlineHighlightAssFile(
+        writeHeadlineHighlightAssFile(
           profile.headline.top,
           topHeadlineText,
           canvasDim.width,
@@ -1402,7 +1319,7 @@ export class ScriptToVideoService {
         );
         filters.push(`ass='${this.assPathForFilter(hlAss)}'`);
       } else {
-        const plainTop = this.stripHeadlineHighlightTags(topHeadlineText).trim();
+        const plainTop = stripHeadlineHighlightTags(topHeadlineText).trim();
         if (plainTop) {
           filters.push(
             `drawtext=text='${this.escapeDrawtextQuotedText(plainTop)}':font='${this.escapeDrawtextQuotedText(profile.headline.top.font)}':fontcolor=${profile.headline.top.fontColor}:fontsize=${profile.headline.top.fontSize}:x=${this.headlineExprX(profile.headline.top)}:y=${this.headlineExprY(profile.headline.top)}`,
@@ -1411,9 +1328,9 @@ export class ScriptToVideoService {
       }
     }
     if (profile.headline.bottom.enabled && bottomHeadlineText) {
-      if (this.headlineHasHighlightTags(bottomHeadlineText)) {
+      if (headlineHasHighlightTags(bottomHeadlineText)) {
         const hlAss = path.join(dirs.subtitles, `headline-bottom-${timestamp}.ass`);
-        this.writeHeadlineHighlightAssFile(
+        writeHeadlineHighlightAssFile(
           profile.headline.bottom,
           bottomHeadlineText,
           canvasDim.width,
@@ -1422,7 +1339,7 @@ export class ScriptToVideoService {
         );
         filters.push(`ass='${this.assPathForFilter(hlAss)}'`);
       } else {
-        const plainBot = this.stripHeadlineHighlightTags(bottomHeadlineText).trim();
+        const plainBot = stripHeadlineHighlightTags(bottomHeadlineText).trim();
         if (plainBot) {
           filters.push(
             `drawtext=text='${this.escapeDrawtextQuotedText(plainBot)}':font='${this.escapeDrawtextQuotedText(profile.headline.bottom.font)}':fontcolor=${profile.headline.bottom.fontColor}:fontsize=${profile.headline.bottom.fontSize}:x=${this.headlineExprX(profile.headline.bottom)}:y=${this.headlineExprY(profile.headline.bottom)}`,

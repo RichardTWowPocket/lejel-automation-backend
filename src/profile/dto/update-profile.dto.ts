@@ -12,6 +12,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ProfileSampleTextsDto } from './create-profile.dto';
 
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 const RATIOS = ['1:1', '3:4', '4:3', '9:16', '16:9'];
@@ -157,4 +158,9 @@ export class UpdateProfileDto {
   @ValidateNested()
   @Type(() => HeadlineConfigUpdateDto)
   headline?: HeadlineConfigUpdateDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ProfileSampleTextsDto)
+  sampleTexts?: ProfileSampleTextsDto;
 }

@@ -45,7 +45,7 @@ export class LlmService {
     return segments.length > 0 ? segments : [fullScript.trim()].filter(Boolean);
   }
 
-  private buildPrompt(script: string, segmentationInstructions?: string | null): string {
+  private buildSegmentationPrompt(script: string, segmentationInstructions?: string | null): string {
     const lines = [
       'Split the following script into speaking segments for TTS-driven video generation.',
       'Use semantic and pacing boundaries (ideas, beats, natural pauses). Do NOT split only on every sentence boundary if that yields awkward cuts.',
@@ -67,6 +67,77 @@ export class LlmService {
     }
     lines.push('', script);
     return lines.join('\n');
+  }
+
+  private static readonly MAX_ARTICLE_TO_SCRIPT_CHARS = 12000;
+
+  private defaultArticleToScriptInstructions(): string {
+    return [
+      'Convert the article into one continuous voiceover script suitable for text-to-speech and short-form video.',
+      'Stay faithful to the facts; use conversational spoken language in the same language as the source unless you are told otherwise below.',
+      'Do not add speaker labels, stage directions, bullet lists meant for readers, or markdown.',
+    ].join(' ');
+  }
+
+  /**
+   * Turns raw webhook/article copy into a single spoken script. Returns null on failure or empty output (caller should concat title+body).
+   */
+  async articleToSpokenScript(params: {
+    title: string | null;
+    articleBody: string;
+    instructions: string;
+    model: SupportedLlmModel;
+  }): Promise<string | null> {
+    const body = params.articleBody?.trim();
+    if (!body) return null;
+    if (!this.apiKey) {
+      this.logger.warn('KIE_AI_API_KEY missing; articleToSpokenScript skipped');
+      return null;
+    }
+
+    const extra = params.instructions?.trim();
+    const instructionBlock = extra || this.defaultArticleToScriptInstructions();
+    const maxLen = LlmService.MAX_ARTICLE_TO_SCRIPT_CHARS;
+
+    const header = [
+      'You convert news or wire copy into ONE continuous voiceover script for text-to-speech (e.g. YouTube Shorts).',
+      'Rules:',
+      '- Output ONLY plain spoken narration: no JSON, no markdown fences, no title line, no "Speaker:" or similar labels.',
+      '- Be faithful to facts; do not invent details.',
+      '- Match the source language unless the extra instructions say otherwise.',
+      `- If the script would exceed about ${maxLen} characters, prioritize the core story without omitting critical facts.`,
+    ].join('\n');
+
+    const titleCtx = params.title
+      ? `Publisher headline (context; weave in naturally only if it fits the narration):\n"${params.title}"\n\n`
+      : '';
+
+    const prompt = [
+      header,
+      '',
+      titleCtx,
+      '--- Extra instructions ---',
+      instructionBlock,
+      '',
+      '--- Article body ---',
+      body,
+    ].join('\n');
+
+    try {
+      const outputText = await this.callKieModel(params.model, prompt);
+      if (!outputText) return null;
+      let text = outputText
+        .replace(/```[\w]*\s*/gi, '')
+        .replace(/```/g, '')
+        .trim();
+      if (!text) return null;
+      if (text.length > maxLen) text = text.slice(0, maxLen);
+      return text;
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`articleToSpokenScript failed: ${msg}`);
+      return null;
+    }
   }
 
   private parseSegmentsFromLlmOutput(outputText: string): string[] | null {
@@ -315,6 +386,7 @@ export class LlmService {
   }
 
   /**
+   * Splits an existing narration script (dashboard input or post–article-rewrite automation script) into TTS segments.
    * @param useLocalFallback when true (default), sentence-split if Kie.ai fails or key missing.
    * When false, returns [] so callers can surface an error (e.g. Generate Script in UI).
    */
@@ -336,7 +408,7 @@ export class LlmService {
     try {
       const outputText = await this.callKieModel(
         model,
-        this.buildPrompt(script, options?.segmentationInstructions),
+        this.buildSegmentationPrompt(script, options?.segmentationInstructions),
       );
 
       if (!outputText) {
@@ -390,6 +462,99 @@ export class LlmService {
     return firstLine || 'Generated headline';
   }
 
+  private defaultAutomationTopHeadlineInstructions(): string {
+    return [
+      'Write ONE short on-screen headline for a vertical Short (top of frame).',
+      'About 3–5 words or a very short phrase in the same language as the script.',
+      'Attention-grabbing but faithful to the topic; no clickbait lies.',
+      'Optional: wrap one highlight span in <h>like this</h> for emphasis.',
+      'Output ONLY that single line: no quotes, no JSON, no labels.',
+    ].join(' ');
+  }
+
+  private defaultAutomationBottomHeadlineInstructions(): string {
+    return [
+      'Write ONE short lower-third style line (channel CTA, subscribe hint, or ticker).',
+      'Very brief (often 3–8 words), same language as the script unless told otherwise.',
+      'Complement the video topic; do not repeat the full top headline verbatim.',
+      'Optional: one <h>highlight</h> span.',
+      'Output ONLY that single line: no quotes, no JSON, no labels.',
+    ].join(' ');
+  }
+
+  /** Burn-in top headline for automation; null on failure (pipeline may derive from script). */
+  async generateAutomationTopHeadline(params: {
+    fullScript: string;
+    webhookTitle: string | null;
+    instructions: string;
+    model: SupportedLlmModel;
+  }): Promise<string | null> {
+    const script = params.fullScript?.trim();
+    if (!script) return null;
+    if (!this.apiKey) {
+      this.logger.warn('KIE_AI_API_KEY missing; generateAutomationTopHeadline skipped');
+      return null;
+    }
+    const extra = params.instructions?.trim() || this.defaultAutomationTopHeadlineInstructions();
+    const ctx = params.webhookTitle
+      ? `Publisher headline (optional context): "${params.webhookTitle}"\n\n`
+      : '';
+    const prompt = [
+      'You write a single line of text that will be burned into the top of a short-form video.',
+      '--- Instructions ---',
+      extra,
+      '',
+      ctx + '--- Full narration script ---',
+      script.slice(0, 12000),
+    ].join('\n');
+    try {
+      const out = await this.callKieModel(params.model, prompt);
+      const line = this.extractSingleLinePrompt(out || '');
+      return line || null;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`generateAutomationTopHeadline failed: ${msg}`);
+      return null;
+    }
+  }
+
+  /** Burn-in bottom headline for automation; null on failure (pipeline may use profile name). */
+  async generateAutomationBottomHeadline(params: {
+    fullScript: string;
+    webhookTitle: string | null;
+    instructions: string;
+    model: SupportedLlmModel;
+  }): Promise<string | null> {
+    const script = params.fullScript?.trim();
+    if (!script) return null;
+    if (!this.apiKey) {
+      this.logger.warn('KIE_AI_API_KEY missing; generateAutomationBottomHeadline skipped');
+      return null;
+    }
+    const extra =
+      params.instructions?.trim() || this.defaultAutomationBottomHeadlineInstructions();
+    const ctx = params.webhookTitle
+      ? `Publisher headline (optional context): "${params.webhookTitle}"\n\n`
+      : '';
+    const prompt = [
+      'You write a single line for the bottom burn-in area of a short-form video (secondary line, often CTA).',
+      '--- Instructions ---',
+      extra,
+      '',
+      ctx + '--- Full narration script ---',
+      script.slice(0, 12000),
+    ].join('\n');
+    try {
+      const out = await this.callKieModel(params.model, prompt);
+      const line = this.extractSingleLinePrompt(out || '');
+      return line || null;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`generateAutomationBottomHeadline failed: ${msg}`);
+      return null;
+    }
+  }
+
   private extractSingleLinePrompt(outputText: string): string {
     const stripped = String(outputText || '')
       .replace(/```[\s\S]*?```/g, (m) => m.replace(/```/g, ''))
@@ -401,6 +566,31 @@ export class LlmService {
       .filter(Boolean)[0];
     const candidate = (first || stripped).trim();
     return candidate.replace(/^"+|"+$/g, '').trim();
+  }
+
+  /**
+   * Image/video prompt helpers need one line; some Kie routes return prose or odd newlines.
+   * If first-line parse is empty but raw body has text, collapse whitespace (last resort).
+   */
+  private coerceSingleLineLlmOutput(raw: string | undefined | null, logContext: string): string {
+    const out = typeof raw === 'string' ? raw : '';
+    const fromLines = this.extractSingleLinePrompt(out);
+    if (fromLines) return fromLines.slice(0, 1200);
+    const collapsed = out
+      .replace(/```[\w]*\s*/gi, '')
+      .replace(/```/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (collapsed) {
+      this.logger.warn(
+        `${logContext}: using collapsed full body (first-line parse was empty), len=${collapsed.length}`,
+      );
+      return collapsed.slice(0, 1200);
+    }
+    this.logger.warn(
+      `${logContext}: no extractable text (rawLen=${out.length}) preview=${JSON.stringify(out.slice(0, 400))}`,
+    );
+    return '';
   }
 
   async generateImagePrompt(
@@ -420,13 +610,17 @@ export class LlmService {
       '- describe subject, setting, lighting, composition, camera framing',
       '- output ONLY the final prompt text (no explanations, no JSON, no quotes)',
       '',
-      'Script segment:',
-      `"${seg}"`,
+      'Script segment (verbatim):',
+      JSON.stringify(seg),
     ].join('\n');
 
     const out = await this.callKieModel(model, prompt);
-    const single = this.extractSingleLinePrompt(out);
-    if (!single) throw new Error('LLM returned empty image prompt');
+    const single = this.coerceSingleLineLlmOutput(out, `generateImagePrompt model=${model}`);
+    if (!single) {
+      throw new Error(
+        `LLM returned empty image prompt (model=${model}). Kie may have returned an unparsed shape, a business error, or no assistant text — check Nest logs for "no extractable text" / "Kie API business error".`,
+      );
+    }
     return single;
   }
 
@@ -447,13 +641,17 @@ export class LlmService {
       '- describe action, setting, camera movement, lighting, mood',
       '- output ONLY the final prompt text (no explanations, no JSON, no quotes)',
       '',
-      'Script segment:',
-      `"${seg}"`,
+      'Script segment (verbatim):',
+      JSON.stringify(seg),
     ].join('\n');
 
     const out = await this.callKieModel(model, prompt);
-    const single = this.extractSingleLinePrompt(out);
-    if (!single) throw new Error('LLM returned empty video prompt');
+    const single = this.coerceSingleLineLlmOutput(out, `generateVideoPrompt model=${model}`);
+    if (!single) {
+      throw new Error(
+        `LLM returned empty video prompt (model=${model}). Same debugging as image prompt: see Nest logs for Kie extract warnings.`,
+      );
+    }
     return single;
   }
 
@@ -503,6 +701,8 @@ export class LlmService {
     titleInstructions: string;
     descriptionInstructions: string;
     tagsInstructions: string;
+    /** When set, single creator block instead of split title/desc/tags instructions. */
+    unifiedMetadataInstructions?: string | null;
     model: SupportedLlmModel;
   }): Promise<GeneratedYoutubeMetadata | null> {
     const script = params.fullScript?.trim();
@@ -526,22 +726,31 @@ export class LlmService {
       ? `Headline from the publisher (context, optional to use): "${params.webhookTitle}"\n\n`
       : '';
 
-    const userBlock = [
-      '--- Title instructions ---',
-      params.titleInstructions.trim() ||
-        'Write a clear, clickable YouTube title for this video.',
-      '',
-      '--- Description instructions ---',
-      params.descriptionInstructions.trim() ||
-        'Write a viewer-friendly description summarizing the video.',
-      '',
-      '--- Tags instructions ---',
-      params.tagsInstructions.trim() ||
-        'Suggest relevant YouTube search tags.',
-      '',
-      '--- Video script (full) ---',
-      script,
-    ].join('\n');
+    const unified = params.unifiedMetadataInstructions?.trim();
+    const userBlock = unified
+      ? [
+          '--- Creator instructions (apply to title, description, and tags together) ---',
+          unified,
+          '',
+          '--- Video script (full) ---',
+          script,
+        ].join('\n')
+      : [
+          '--- Title instructions ---',
+          params.titleInstructions.trim() ||
+            'Write a clear, clickable YouTube title for this video.',
+          '',
+          '--- Description instructions ---',
+          params.descriptionInstructions.trim() ||
+            'Write a viewer-friendly description summarizing the video.',
+          '',
+          '--- Tags instructions ---',
+          params.tagsInstructions.trim() ||
+            'Suggest relevant YouTube search tags.',
+          '',
+          '--- Video script (full) ---',
+          script,
+        ].join('\n');
 
     const prompt = `${header}\n\n${ctx}${userBlock}`;
 

@@ -62,6 +62,14 @@ export class AutomationChannel {
   @Column('text', { nullable: true })
   scriptSegmentationPrompt: string | null;
 
+  /** When true, webhook runs LLM to turn raw title+body into spoken fullScript before segmentation. */
+  @Column({ default: false })
+  articleToScriptEnabled: boolean;
+
+  /** Extra instructions for article→spoken script LLM (automation only). */
+  @Column('text', { nullable: true })
+  articleToScriptPrompt: string | null;
+
   @Column({ type: 'varchar', length: 32, default: 'private' })
   youtubePrivacyStatus: 'public' | 'private' | 'unlisted';
 
@@ -83,6 +91,24 @@ export class AutomationChannel {
 
   @Column('text', { nullable: true })
   youtubeTagsPrompt: string | null;
+
+  /** Single instructions block for LLM YouTube metadata (replaces split title/desc/tags prompts when set). */
+  @Column('text', { nullable: true })
+  youtubeMetadataPrompt: string | null;
+
+  /** When true, webhook may run LLM for top burn-in headline (only if profile has top headline enabled). */
+  @Column({ default: false })
+  automationTopHeadlineEnabled: boolean;
+
+  @Column('text', { nullable: true })
+  automationTopHeadlinePrompt: string | null;
+
+  /** When true, webhook may run LLM for bottom burn-in headline (only if profile has bottom headline enabled). */
+  @Column({ default: false })
+  automationBottomHeadlineEnabled: boolean;
+
+  @Column('text', { nullable: true })
+  automationBottomHeadlinePrompt: string | null;
 
   /** Appended after generated or template description (plain text CTA). */
   @Column('text', { nullable: true })

@@ -78,6 +78,14 @@ export class UpdateAutomationChannelDto {
   scriptSegmentationPrompt?: string | null;
 
   @IsOptional()
+  @IsBoolean()
+  articleToScriptEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  articleToScriptPrompt?: string | null;
+
+  @IsOptional()
   @IsIn(['public', 'private', 'unlisted'])
   youtubePrivacyStatus?: 'public' | 'private' | 'unlisted';
 
@@ -105,6 +113,26 @@ export class UpdateAutomationChannelDto {
   @IsOptional()
   @IsString()
   youtubeTagsPrompt?: string | null;
+
+  @IsOptional()
+  @IsString()
+  youtubeMetadataPrompt?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  automationTopHeadlineEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  automationTopHeadlinePrompt?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  automationBottomHeadlineEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  automationBottomHeadlinePrompt?: string | null;
 
   @IsOptional()
   @IsString()
