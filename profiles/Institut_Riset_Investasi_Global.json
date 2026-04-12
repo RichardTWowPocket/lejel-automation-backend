@@ -1,0 +1,69 @@
+{
+  "profileId": "Institut_Riset_Investasi_Global",
+  "name": "Institut Riset Investasi Global",
+  "description": "Institut Riset Investasi Global",
+  "canvas": {
+    "ratio": "9:16",
+    "resolution": "1080p"
+  },
+  "content": {
+    "ratio": "9:16",
+    "resolution": "1080p",
+    "xOffset": 0,
+    "yOffset": 0
+  },
+  "subtitle": {
+    "enabled": true,
+    "font": "Black Han Sans",
+    "fontSize": 72,
+    "fontColor": "#D6D6D6",
+    "highlightColor": "#91F52E",
+    "outlineColor": "#000000",
+    "outlineWidth": 3,
+    "background": false,
+    "backColor": "#000000",
+    "alignment": 5,
+    "yOffset": 300,
+    "xOffset": 0,
+    "bold": false,
+    "italic": false,
+    "socialMediaStyle": true
+  },
+  "headline": {
+    "top": {
+      "enabled": false,
+      "font": "Noto Sans CJK KR",
+      "fontSize": 120,
+      "fontColor": "#FFFFFF",
+      "highlightColor": "#FF0000",
+      "outlineColor": "#000000",
+      "outlineWidth": 5,
+      "background": false,
+      "backColor": "#000000",
+      "alignment": 8,
+      "yOffset": 0,
+      "xOffset": 0,
+      "bold": false,
+      "italic": false
+    },
+    "bottom": {
+      "enabled": false,
+      "font": "Noto Sans CJK KR",
+      "fontSize": 100,
+      "fontColor": "#FFFFFF",
+      "highlightColor": "#FF0000",
+      "outlineColor": "#000000",
+      "outlineWidth": 5,
+      "background": false,
+      "backColor": "#000000",
+      "alignment": 2,
+      "yOffset": 0,
+      "xOffset": 0,
+      "bold": false,
+      "italic": false
+    }
+  },
+  "sampleTexts": {
+    "subtitle": "송치영 회장은 소상공인의"
+  }
+}
