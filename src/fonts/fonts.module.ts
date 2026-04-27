@@ -7,4 +7,3 @@ import { FontsController } from './fonts.controller';
   controllers: [FontsController],
 })
 export class FontsModule {}
-

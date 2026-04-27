@@ -1,4 +1,12 @@
-import { IsArray, IsNotEmpty, ValidateNested, IsString, IsNumber, IsOptional, IsEnum } from 'class-validator';
+import {
+  IsArray,
+  IsNotEmpty,
+  ValidateNested,
+  IsString,
+  IsNumber,
+  IsOptional,
+  IsEnum,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class SectionDataDto {
@@ -89,7 +97,3 @@ export class CombineMediasDto {
   @IsString()
   profile?: string; // Profile ID to load from profiles/{profile}.json (e.g. saham_hedgehog)
 }
-
-
-
-

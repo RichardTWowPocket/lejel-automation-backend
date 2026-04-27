@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Between, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { randomBytes, randomUUID } from 'crypto';
 import { AutomationChannel } from '../entities/automation-channel.entity';
@@ -166,9 +166,7 @@ export class AutomationService {
     return this.toChannelRow(ch);
   }
 
-  async createChannel(
-    dto: CreateAutomationChannelDto,
-  ): Promise<{
+  async createChannel(dto: CreateAutomationChannelDto): Promise<{
     channel: ReturnType<AutomationService['toChannelRow']>;
     webhookSecret: string;
   }> {
@@ -207,7 +205,9 @@ export class AutomationService {
       automationBottomHeadlineEnabled: dto.automationBottomHeadlineEnabled === true,
       automationBottomHeadlinePrompt: dto.automationBottomHeadlinePrompt?.trim() || null,
       youtubeDescriptionCta: dto.youtubeDescriptionCta?.trim() || null,
-      youtubeTagPrefixes: dto.youtubeTagPrefixes?.length ? dto.youtubeTagPrefixes.map((t) => t.trim()).filter(Boolean) : null,
+      youtubeTagPrefixes: dto.youtubeTagPrefixes?.length
+        ? dto.youtubeTagPrefixes.map((t) => t.trim()).filter(Boolean)
+        : null,
       enabled: dto.enabled !== false,
     });
     const saved = await this.channelRepo.save(ch);
@@ -240,18 +240,14 @@ export class AutomationService {
     if (dto.llmModel !== undefined) ch.llmModel = dto.llmModel || null;
     if (dto.scriptSegmentationPrompt !== undefined) {
       ch.scriptSegmentationPrompt =
-        dto.scriptSegmentationPrompt === null
-          ? null
-          : dto.scriptSegmentationPrompt.trim() || null;
+        dto.scriptSegmentationPrompt === null ? null : dto.scriptSegmentationPrompt.trim() || null;
     }
     if (dto.articleToScriptEnabled !== undefined) {
       ch.articleToScriptEnabled = dto.articleToScriptEnabled;
     }
     if (dto.articleToScriptPrompt !== undefined) {
       ch.articleToScriptPrompt =
-        dto.articleToScriptPrompt === null
-          ? null
-          : dto.articleToScriptPrompt.trim() || null;
+        dto.articleToScriptPrompt === null ? null : dto.articleToScriptPrompt.trim() || null;
     }
     if (dto.youtubePrivacyStatus !== undefined) {
       ch.youtubePrivacyStatus = dto.youtubePrivacyStatus;
@@ -274,9 +270,7 @@ export class AutomationService {
     }
     if (dto.youtubeDescriptionPrompt !== undefined) {
       ch.youtubeDescriptionPrompt =
-        dto.youtubeDescriptionPrompt === null
-          ? null
-          : dto.youtubeDescriptionPrompt.trim() || null;
+        dto.youtubeDescriptionPrompt === null ? null : dto.youtubeDescriptionPrompt.trim() || null;
     }
     if (dto.youtubeTagsPrompt !== undefined) {
       ch.youtubeTagsPrompt =
@@ -284,9 +278,7 @@ export class AutomationService {
     }
     if (dto.youtubeMetadataPrompt !== undefined) {
       ch.youtubeMetadataPrompt =
-        dto.youtubeMetadataPrompt === null
-          ? null
-          : dto.youtubeMetadataPrompt.trim() || null;
+        dto.youtubeMetadataPrompt === null ? null : dto.youtubeMetadataPrompt.trim() || null;
     }
     if (dto.automationTopHeadlineEnabled !== undefined) {
       ch.automationTopHeadlineEnabled = dto.automationTopHeadlineEnabled;
@@ -339,6 +331,45 @@ export class AutomationService {
     ch.webhookSecretPrefix = this.secretPrefix(plainSecret);
     const saved = await this.channelRepo.save(ch);
     return { channel: this.toChannelRow(saved), webhookSecret: plainSecret };
+  }
+
+  async getDashboardStats(
+    fromInput: string,
+    toInput: string,
+  ): Promise<{
+    totalChannels: number;
+    totalRuns: number;
+    failedRuns: number;
+    failureRate: number;
+    from: string;
+    to: string;
+  }> {
+    const from = new Date(fromInput);
+    const to = new Date(toInput);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      throw new BadRequestException('Invalid from or to date');
+    }
+    if (from.getTime() > to.getTime()) {
+      throw new BadRequestException('from must be before or equal to to');
+    }
+
+    const totalChannels = await this.channelRepo.count();
+    const totalRuns = await this.runRepo.count({
+      where: { createdAt: Between(from, to) },
+    });
+    const failedRuns = await this.runRepo.count({
+      where: { createdAt: Between(from, to), status: 'failed' },
+    });
+    const failureRate = totalRuns > 0 ? failedRuns / totalRuns : 0;
+
+    return {
+      totalChannels,
+      totalRuns,
+      failedRuns,
+      failureRate,
+      from: from.toISOString(),
+      to: to.toISOString(),
+    };
   }
 
   async listRuns(

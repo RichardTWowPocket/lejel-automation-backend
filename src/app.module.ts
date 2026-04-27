@@ -14,12 +14,16 @@ import { GoogleClient } from './entities/google-client.entity';
 import { OAuthCredential } from './entities/oauth-credential.entity';
 import { AutomationChannel } from './entities/automation-channel.entity';
 import { AutomationRun } from './entities/automation-run.entity';
+import { RemotionTemplate } from './entities/remotion-template.entity';
 import { OAuthModule } from './oauth/oauth.module';
+import { RemotionModule } from './remotion/remotion.module';
 import { AutomationModule } from './automation/automation.module';
 import { LlmModule } from './llm/llm.module';
 import { ElevenLabsModule } from './elevenlabs/elevenlabs.module';
 import { KieAiModule } from './kie-ai/kie-ai.module';
 import { FontsModule } from './fonts/fonts.module';
+import { MediaModule } from './media/media.module';
+import { NewsModule } from './news/news.module';
 
 @Module({
   imports: [
@@ -50,6 +54,7 @@ import { FontsModule } from './fonts/fonts.module';
             OAuthCredential,
             AutomationChannel,
             AutomationRun,
+            RemotionTemplate,
           ],
           synchronize: true,
         };
@@ -64,6 +69,8 @@ import { FontsModule } from './fonts/fonts.module';
     }),
     AuthModule,
     OAuthModule,
+    MediaModule,
+    NewsModule,
     VideoRequestModule,
     AutomationModule,
     HealthModule,
@@ -74,11 +81,7 @@ import { FontsModule } from './fonts/fonts.module';
     VideoModule,
     ProfileModule,
     FontsModule,
+    RemotionModule,
   ],
 })
-export class AppModule { }
-
-
-
-
-
+export class AppModule {}

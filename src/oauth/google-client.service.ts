@@ -52,7 +52,11 @@ export class GoogleClientService {
   }
 
   /** Create a Google client. Returns id and label. */
-  async create(clientId: string, clientSecret: string, label?: string): Promise<{ id: string; label: string }> {
+  async create(
+    clientId: string,
+    clientSecret: string,
+    label?: string,
+  ): Promise<{ id: string; label: string }> {
     if (!clientId?.trim() || !clientSecret?.trim()) {
       throw new BadRequestException('clientId and clientSecret are required');
     }
@@ -84,7 +88,9 @@ export class GoogleClientService {
   }
 
   /** Get decrypted clientId and clientSecret by client id (for OAuth flow). */
-  async getCredentials(googleClientId: string): Promise<{ clientId: string; clientSecret: string }> {
+  async getCredentials(
+    googleClientId: string,
+  ): Promise<{ clientId: string; clientSecret: string }> {
     const client = await this.clientRepo.findOne({ where: { id: googleClientId } });
     if (!client) {
       throw new NotFoundException('Google client not found');

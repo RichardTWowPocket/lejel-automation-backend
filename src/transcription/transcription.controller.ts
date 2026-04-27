@@ -44,19 +44,15 @@ const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCa
     'audio/mp4',
     'audio/x-wav',
   ];
-  
+
   // Also check file extension as fallback
   const allowedExts = ['.mp3', '.wav', '.webm', '.ogg', '.flac', '.m4a', '.mp4'];
   const ext = path.extname(file.originalname).toLowerCase();
-  
+
   if (allowedMimes.includes(file.mimetype) || allowedExts.includes(ext)) {
     cb(null, true);
   } else {
-    cb(
-      new BadRequestException(
-        `Invalid file type. Allowed types: ${allowedMimes.join(', ')}`,
-      ),
-    );
+    cb(new BadRequestException(`Invalid file type. Allowed types: ${allowedMimes.join(', ')}`));
   }
 };
 
@@ -104,8 +100,3 @@ export class TranscriptionController {
     }
   }
 }
-
-
-
-
-

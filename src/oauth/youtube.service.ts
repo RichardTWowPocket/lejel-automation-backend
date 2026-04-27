@@ -17,7 +17,8 @@ export class YouTubeService {
 
   private async getAccessToken(credentialId?: string): Promise<string> {
     const id = credentialId || (await this.oauth.getFirstConnectedCredentialId());
-    if (!id) throw new Error('No YouTube connection found. Create a connection and complete OAuth first.');
+    if (!id)
+      throw new Error('No YouTube connection found. Create a connection and complete OAuth first.');
     return this.oauth.getValidAccessToken(id);
   }
 
@@ -27,7 +28,11 @@ export class YouTubeService {
    * @param options - Video metadata
    * @returns YouTube video ID
    */
-  async uploadVideo(filePath: string, options: YouTubeUploadOptions, credentialId?: string): Promise<string> {
+  async uploadVideo(
+    filePath: string,
+    options: YouTubeUploadOptions,
+    credentialId?: string,
+  ): Promise<string> {
     const accessToken = await this.getAccessToken(credentialId);
     const stats = fs.statSync(filePath);
     const fileSize = stats.size;
@@ -97,7 +102,8 @@ export class YouTubeService {
         maxBodyLength: Infinity,
       });
     } catch (e: unknown) {
-      const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : String(e);
+      const msg =
+        e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : String(e);
       throw new Error(`Failed to download video from URL: ${msg}`);
     }
     const ct = String(res.headers['content-type'] || '').toLowerCase();

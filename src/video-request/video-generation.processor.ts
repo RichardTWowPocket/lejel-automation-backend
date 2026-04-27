@@ -3,7 +3,10 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { VideoRequestService } from './video-request.service';
 import { VIDEO_GENERATION_JOB, VIDEO_GENERATION_QUEUE } from './video-request.queue';
-import { ScriptToVideoService, VideoPipelineCancelledError } from '../video/script-to-video.service';
+import {
+  ScriptToVideoService,
+  VideoPipelineCancelledError,
+} from '../video/script-to-video.service';
 import { AutomationService } from '../automation/automation.service';
 
 @Processor(VIDEO_GENERATION_QUEUE)
@@ -19,9 +22,7 @@ export class VideoGenerationProcessor extends WorkerHost {
     super();
   }
 
-  async process(
-    job: Job<{ requestId: string; resume?: boolean; automationRunId?: string }>,
-  ) {
+  async process(job: Job<{ requestId: string; resume?: boolean; automationRunId?: string }>) {
     if (job.name !== VIDEO_GENERATION_JOB) return;
     const requestId = job.data?.requestId;
     if (!requestId) return;
@@ -58,7 +59,11 @@ export class VideoGenerationProcessor extends WorkerHost {
         await this.automationService.onRunFailed(automationRunId, 'Cancelled');
         return;
       }
-      await this.videoRequestService.markCompleted(requestId, output.resultUrl, output.debugMetaUrl);
+      await this.videoRequestService.markCompleted(
+        requestId,
+        output.resultUrl,
+        output.debugMetaUrl,
+      );
       const afterComplete = await this.videoRequestService.getEntityById(requestId);
       if (
         automationRunId &&
@@ -89,4 +94,3 @@ export class VideoGenerationProcessor extends WorkerHost {
     }
   }
 }
-

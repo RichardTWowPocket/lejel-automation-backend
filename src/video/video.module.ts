@@ -10,28 +10,10 @@ import { ScriptToVideoService } from './script-to-video.service';
 import { VideoController } from './video.controller';
 import { VideoProcessingService } from './video-processing.service';
 import { RequestFsService } from './request-fs.service';
-
 @Module({
-  imports: [
-    AuthModule,
-    LlmModule,
-    ElevenLabsModule,
-    KieAiModule,
-    AssemblyAIModule,
-    ProfileModule,
-  ],
+  imports: [AuthModule, LlmModule, ElevenLabsModule, KieAiModule, AssemblyAIModule, ProfileModule],
   controllers: [VideoController],
-  providers: [
-    UploadMediaService,
-    ScriptToVideoService,
-    VideoProcessingService,
-    RequestFsService,
-  ],
-  exports: [
-    UploadMediaService,
-    ScriptToVideoService,
-    VideoProcessingService,
-    RequestFsService,
-  ],
+  providers: [UploadMediaService, ScriptToVideoService, VideoProcessingService, RequestFsService],
+  exports: [UploadMediaService, ScriptToVideoService, VideoProcessingService, RequestFsService],
 })
 export class VideoModule {}

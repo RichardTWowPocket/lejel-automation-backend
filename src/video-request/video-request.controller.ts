@@ -25,10 +25,7 @@ export class VideoRequestController {
 
   @Post()
   @UseGuards(JwtAuthGuard)
-  async create(
-    @ReqUser() user: { id: string },
-    @Body() dto: CreateVideoRequestDto,
-  ) {
+  async create(@ReqUser() user: { id: string }, @Body() dto: CreateVideoRequestDto) {
     const request = await this.videoRequestService.create(user.id, dto);
     return {
       id: request.id,
@@ -43,6 +40,7 @@ export class VideoRequestController {
       profileId: request.profileId || undefined,
       imageModel: request.imageModel || undefined,
       videoModel: request.videoModel || undefined,
+      userSegmentMedia: request.userSegmentMedia?.length ? request.userSegmentMedia : undefined,
     };
   }
 
@@ -59,10 +57,7 @@ export class VideoRequestController {
 
   @Get(':id')
   @UseGuards(JwtAuthGuard)
-  async getOne(
-    @ReqUser() user: { id: string; role?: 'user' | 'admin' },
-    @Param('id') id: string,
-  ) {
+  async getOne(@ReqUser() user: { id: string; role?: 'user' | 'admin' }, @Param('id') id: string) {
     return this.videoRequestService.findOne(id, user.id, {
       isAdmin: user.role === 'admin',
     });
@@ -91,10 +86,7 @@ export class VideoRequestController {
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard)
-  async remove(
-    @ReqUser() user: { id: string; role?: 'user' | 'admin' },
-    @Param('id') id: string,
-  ) {
+  async remove(@ReqUser() user: { id: string; role?: 'user' | 'admin' }, @Param('id') id: string) {
     return this.videoRequestService.remove(id, user.id, {
       isAdmin: user.role === 'admin',
     });
@@ -102,10 +94,7 @@ export class VideoRequestController {
 
   @Post(':id/stop')
   @UseGuards(JwtAuthGuard)
-  async stop(
-    @ReqUser() user: { id: string; role?: 'user' | 'admin' },
-    @Param('id') id: string,
-  ) {
+  async stop(@ReqUser() user: { id: string; role?: 'user' | 'admin' }, @Param('id') id: string) {
     return this.videoRequestService.stopRequest(id, user.id, {
       isAdmin: user.role === 'admin',
     });
@@ -113,10 +102,7 @@ export class VideoRequestController {
 
   @Post(':id/retry')
   @UseGuards(JwtAuthGuard)
-  async retry(
-    @ReqUser() user: { id: string; role?: 'user' | 'admin' },
-    @Param('id') id: string,
-  ) {
+  async retry(@ReqUser() user: { id: string; role?: 'user' | 'admin' }, @Param('id') id: string) {
     return this.videoRequestService.retryFailed(id, user.id, {
       isAdmin: user.role === 'admin',
     });
@@ -145,19 +131,13 @@ export class VideoRequestController {
 
   @Post(':id/admin/approve-youtube')
   @UseGuards(JwtAuthGuard, AdminGuard)
-  async approveYoutubeUpload(
-    @Param('id') id: string,
-    @ReqUser() user: { id: string },
-  ) {
+  async approveYoutubeUpload(@Param('id') id: string, @ReqUser() user: { id: string }) {
     return this.videoRequestService.approveYoutubeUpload(id, user.id);
   }
 
   @Post(':id/admin/reject-youtube')
   @UseGuards(JwtAuthGuard, AdminGuard)
-  async rejectYoutubeUpload(
-    @Param('id') id: string,
-    @ReqUser() user: { id: string },
-  ) {
+  async rejectYoutubeUpload(@Param('id') id: string, @ReqUser() user: { id: string }) {
     return this.videoRequestService.rejectYoutubeUpload(id, user.id);
   }
 }

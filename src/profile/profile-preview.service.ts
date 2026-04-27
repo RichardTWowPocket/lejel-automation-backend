@@ -22,10 +22,7 @@ export class ProfilePreviewService {
    * Inside single quotes only \\ and \' are special.
    */
   private escQuoted(text: string): string {
-    return text
-      .replace(/\\/g, '\\\\')
-      .replace(/'/g, "\\'")
-      .replace(/\n/g, ' ');
+    return text.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, ' ');
   }
 
   /**
@@ -110,13 +107,7 @@ export class ProfilePreviewService {
 
     try {
       const styleHint =
-        bold && italic
-          ? 'Bold Italic'
-          : bold
-            ? 'Bold'
-            : italic
-              ? 'Italic'
-              : 'Regular';
+        bold && italic ? 'Bold Italic' : bold ? 'Bold' : italic ? 'Italic' : 'Regular';
       const pattern = `${fontName}:style=${styleHint}`;
       const result = execSync(`fc-match -f '%{file}' '${pattern.replace(/'/g, "'\\''")}'`, {
         timeout: 3000,
@@ -189,7 +180,9 @@ export class ProfilePreviewService {
 
       if (fontFile) {
         parts.push(`fontfile='${this.escQuoted(fontFile)}'`);
-        this.logger.debug(`Font "${style.font}" bold=${style.bold} italic=${style.italic} -> ${fontFile}`);
+        this.logger.debug(
+          `Font "${style.font}" bold=${style.bold} italic=${style.italic} -> ${fontFile}`,
+        );
       } else {
         parts.push(`font='${this.escQuoted(style.font)}'`);
         this.logger.warn(`No fontfile found for "${style.font}", using font= fallback`);
@@ -235,7 +228,9 @@ export class ProfilePreviewService {
         });
         ff.on('error', reject);
         ff.on('exit', (code) =>
-          code === 0 ? resolve() : reject(new Error(`ffmpeg failed (${code}): ${stderr.slice(-1200)}`)),
+          code === 0
+            ? resolve()
+            : reject(new Error(`ffmpeg failed (${code}): ${stderr.slice(-1200)}`)),
         );
       });
       const b64 = fs.readFileSync(outFile).toString('base64');

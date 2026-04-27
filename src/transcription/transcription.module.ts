@@ -9,4 +9,4 @@ import { AssemblyAIModule } from '../assemblyai/assemblyai.module';
   providers: [TranscriptionService],
   exports: [TranscriptionService],
 })
-export class TranscriptionModule { }
+export class TranscriptionModule {}

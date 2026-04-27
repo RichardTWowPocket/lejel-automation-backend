@@ -1,10 +1,6 @@
-import {
-  IsString,
-  IsArray,
-  ArrayMinSize,
-  IsOptional,
-  IsIn,
-} from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsString, IsArray, ArrayMinSize, IsOptional, IsIn, ValidateNested } from 'class-validator';
+import { UserSegmentMediaItemDto } from './user-segment-media-item.dto';
 
 export class CreateVideoRequestDto {
   @IsString()
@@ -107,4 +103,11 @@ export class CreateVideoRequestDto {
   @IsOptional()
   @IsString()
   bottomHeadlineText?: string;
+
+  /** R2-backed user media mapped to segment indices (Generate video). */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => UserSegmentMediaItemDto)
+  userSegmentMedia?: UserSegmentMediaItemDto[];
 }

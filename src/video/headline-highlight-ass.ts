@@ -30,11 +30,7 @@ function assAnchorY(alignment: number): 'top' | 'middle' | 'bottom' {
 }
 
 /** ASS \\pos + \\an so xOffset/yOffset match drawtext geometry. */
-function assSubtitlePosPrefix(
-  style: TextStyleConfig,
-  playResX: number,
-  playResY: number,
-): string {
+function assSubtitlePosPrefix(style: TextStyleConfig, playResX: number, playResY: number): string {
   const a = style.alignment ?? 2;
   const ax = assAnchorX(a);
   const ay = assAnchorY(a);
@@ -64,7 +60,15 @@ function assSubtitlePosPrefix(
 
 function textStyleToAssHeadline(style: TextStyleConfig, styleName = 'HeadlineHl'): string {
   const assAlignmentMap: Record<number, number> = {
-    1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9,
+    1: 1,
+    2: 2,
+    3: 3,
+    4: 4,
+    5: 5,
+    6: 6,
+    7: 7,
+    8: 8,
+    9: 9,
   };
   const alignment = assAlignmentMap[style.alignment] ?? 2;
   const primary = style.fontColor;
@@ -80,7 +84,9 @@ export function stripHeadlineHighlightTags(s: string): string {
   return (s || '').replace(/<\/?h>/gi, '');
 }
 
-function parseHeadlineHighlightSegments(input: string): Array<{ text: string; highlight: boolean }> {
+function parseHeadlineHighlightSegments(
+  input: string,
+): Array<{ text: string; highlight: boolean }> {
   const s = input || '';
   const re = /<h>([\s\S]*?)<\/h>/gi;
   const out: Array<{ text: string; highlight: boolean }> = [];

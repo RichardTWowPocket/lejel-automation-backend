@@ -1,4 +1,11 @@
-import { IsArray, IsNotEmpty, ValidateNested, IsString, IsNumber, IsOptional } from 'class-validator';
+import {
+  IsArray,
+  IsNotEmpty,
+  ValidateNested,
+  IsString,
+  IsNumber,
+  IsOptional,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class MediaResultDto {
@@ -45,4 +52,3 @@ export class CombineWithSubtitlesDto {
   @IsString()
   returnUrl?: string; // If "yes" or "true", return public URL instead of streaming file
 }
-

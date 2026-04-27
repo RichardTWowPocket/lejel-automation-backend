@@ -2,13 +2,7 @@ import { Injectable } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
 
-type RequestSubdir =
-  | 'audio'
-  | 'transcript'
-  | 'subtitles'
-  | 'segments'
-  | 'final'
-  | 'meta';
+type RequestSubdir = 'audio' | 'transcript' | 'subtitles' | 'segments' | 'final' | 'meta';
 
 @Injectable()
 export class RequestFsService {
@@ -46,4 +40,3 @@ export class RequestFsService {
     return `${cleanBase}/requests/${requestId}/${rel}`;
   }
 }
-

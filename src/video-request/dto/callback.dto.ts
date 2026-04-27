@@ -8,7 +8,9 @@ function parseTags(value: unknown): string[] | undefined {
   if (typeof value === 'string') {
     try {
       const parsed = JSON.parse(value) as unknown;
-      return Array.isArray(parsed) && parsed.every((x) => typeof x === 'string') ? (parsed as string[]) : undefined;
+      return Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')
+        ? (parsed as string[])
+        : undefined;
     } catch {
       return undefined;
     }

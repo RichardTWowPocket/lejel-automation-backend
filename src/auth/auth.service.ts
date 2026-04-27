@@ -46,10 +46,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  private maxDate(
-    a: Date | null | undefined,
-    b: Date | null | undefined,
-  ): Date | null {
+  private maxDate(a: Date | null | undefined, b: Date | null | undefined): Date | null {
     const tA = a ? a.getTime() : -Infinity;
     const tB = b ? b.getTime() : -Infinity;
     if (tA === -Infinity && tB === -Infinity) {
@@ -186,7 +183,9 @@ export class AuthService {
     return this.issueToken(user);
   }
 
-  async findById(id: string): Promise<{ id: string; email: string; name: string; role: 'user' | 'admin' } | null> {
+  async findById(
+    id: string,
+  ): Promise<{ id: string; email: string; name: string; role: 'user' | 'admin' } | null> {
     const user = await this.userRepository.findOne({ where: { id } });
     if (!user) return null;
     return { id: user.id, email: user.email, name: user.name, role: user.role };

@@ -1,11 +1,4 @@
-import {
-  Body,
-  Controller,
-  Headers,
-  Param,
-  Post,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Body, Controller, Headers, Param, Post, UnauthorizedException } from '@nestjs/common';
 import { AutomationService } from './automation.service';
 import { AutomationWebhookDto } from './dto/automation-webhook.dto';
 

@@ -10,6 +10,7 @@ import { ProfileService } from '../profile/profile.service';
 import { LlmService, SupportedLlmModel } from '../llm/llm.service';
 import { KieAiService, KieMarketImageModel } from '../kie-ai/kie-ai.service';
 import { RequestFsService } from './request-fs.service';
+import { R2Service } from '../media/r2.service';
 import { TextStyleConfig, VideoProfile } from './types/profile-config.interface';
 import { resolveDimensions, Ratio, Resolution } from '../profile/profile-dimensions';
 import {
@@ -46,6 +47,7 @@ export class ScriptToVideoService {
     private readonly llmService: LlmService,
     private readonly kieAiService: KieAiService,
     private readonly requestFsService: RequestFsService,
+    private readonly r2Service: R2Service,
   ) {}
 
   private async pipelineAbortIfNeeded(abortCheck?: () => Promise<boolean>): Promise<void> {
@@ -144,7 +146,10 @@ export class ScriptToVideoService {
    * Optional NARRATION_MAX_TAIL_BEYOND_TRANSCRIPT_SEC: cap how far past transcript end we trust file duration
    * (mitigates bogus long containers).
    */
-  private resolveMasterTimelineEndSec(transcriptEndSec: number, audioFileDurationSec: number): number {
+  private resolveMasterTimelineEndSec(
+    transcriptEndSec: number,
+    audioFileDurationSec: number,
+  ): number {
     if (!(transcriptEndSec > 0)) {
       return Math.max(transcriptEndSec, audioFileDurationSec);
     }
@@ -256,7 +261,13 @@ export class ScriptToVideoService {
       wordCumChars.push(wCum);
     }
 
-    const out: Array<{ index: number; text: string; start: number; end: number; duration: number }> = [];
+    const out: Array<{
+      index: number;
+      text: string;
+      start: number;
+      end: number;
+      duration: number;
+    }> = [];
     let wordCursor = 0;
 
     for (let i = 0; i < segments.length; i += 1) {
@@ -369,7 +380,11 @@ export class ScriptToVideoService {
   }
 
   /** For ASS \\k karaoke: Secondary = unspoken, Primary = highlighted (swap vs plain dialogue). */
-  private textStyleToAss(style: TextStyleConfig, forKaraoke = false, styleName = 'Default'): string {
+  private textStyleToAss(
+    style: TextStyleConfig,
+    forKaraoke = false,
+    styleName = 'Default',
+  ): string {
     const bgr = (hex: string) => {
       const clean = hex.replace('#', '');
       const r = clean.slice(0, 2);
@@ -378,7 +393,15 @@ export class ScriptToVideoService {
       return `&H00${b}${g}${r}`;
     };
     const assAlignmentMap: Record<number, number> = {
-      1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9,
+      1: 1,
+      2: 2,
+      3: 3,
+      4: 4,
+      5: 5,
+      6: 6,
+      7: 7,
+      8: 8,
+      9: 9,
     };
     const alignment = assAlignmentMap[style.alignment] ?? 2;
     const primary = forKaraoke ? style.highlightColor : style.fontColor;
@@ -617,7 +640,8 @@ export class ScriptToVideoService {
     request: VideoRequest,
     dirs: { meta: string },
     resume: boolean,
-    abortCheck?: () => Promise<boolean>,
+    abortCheck: (() => Promise<boolean>) | undefined,
+    skipPromptSegmentIndices: Set<number>,
   ): Promise<void> {
     const planPath = path.join(dirs.meta, 'media-plan.json');
     if (resume) {
@@ -638,10 +662,16 @@ export class ScriptToVideoService {
     }
 
     const model = ((request.llmModel || 'gpt-5-4') as SupportedLlmModel) || 'gpt-5-4';
-    this.logger.log(`Generating media prompts via LLM (model=${model}) for ${mediaPlan.length} segments`);
+    this.logger.log(
+      `Generating media prompts via LLM (model=${model}) for ${mediaPlan.length} segments`,
+    );
     for (let i = 0; i < mediaPlan.length; i += 1) {
       await this.pipelineAbortIfNeeded(abortCheck);
       const seg = mediaPlan[i];
+      if (skipPromptSegmentIndices.has(seg.index)) {
+        seg.prompt = '(user upload)';
+        continue;
+      }
       if (seg.mediaType === 'image') {
         seg.prompt = await this.llmService.generateImagePrompt(seg.text, model);
       } else {
@@ -752,7 +782,10 @@ export class ScriptToVideoService {
     if (!url) {
       throw new Error(`Kie image (${model}) success but no resultUrls in resultJson`);
     }
-    const imageRes = await axios.get<ArrayBuffer>(url, { responseType: 'arraybuffer', timeout: 120000 });
+    const imageRes = await axios.get<ArrayBuffer>(url, {
+      responseType: 'arraybuffer',
+      timeout: 120000,
+    });
     fs.writeFileSync(outputPath, Buffer.from(imageRes.data));
   }
 
@@ -793,17 +826,31 @@ export class ScriptToVideoService {
         this.logger.warn(`${segmentLabel} ${label} failed: ${lastError.message}`);
       }
     }
-    throw lastError ?? new Error(`${segmentLabel} Kie image failed after ${attempts.length} attempts`);
+    throw (
+      lastError ?? new Error(`${segmentLabel} Kie image failed after ${attempts.length} attempts`)
+    );
   }
 
-  private async createPlaceholderVideo(outputPath: string, label: string, duration: number, w = 1280, h = 720): Promise<void> {
+  private async createPlaceholderVideo(
+    outputPath: string,
+    label: string,
+    duration: number,
+    w = 1280,
+    h = 720,
+  ): Promise<void> {
     await this.runFfmpeg([
-      '-f', 'lavfi',
-      '-i', `color=c=0x0f172a:s=${w}x${h}:d=${Math.max(0.2, duration)}`,
-      '-vf', `drawtext=text='${this.escapeDrawtextQuotedText(label)}':x=(w-text_w)/2:y=(h-text_h)/2:fontcolor=white:fontsize=28`,
-      '-t', String(Math.max(0.2, duration)),
-      '-r', '30',
-      '-pix_fmt', 'yuv420p',
+      '-f',
+      'lavfi',
+      '-i',
+      `color=c=0x0f172a:s=${w}x${h}:d=${Math.max(0.2, duration)}`,
+      '-vf',
+      `drawtext=text='${this.escapeDrawtextQuotedText(label)}':x=(w-text_w)/2:y=(h-text_h)/2:fontcolor=white:fontsize=28`,
+      '-t',
+      String(Math.max(0.2, duration)),
+      '-r',
+      '30',
+      '-pix_fmt',
+      'yuv420p',
       '-y',
       outputPath,
     ]);
@@ -837,6 +884,16 @@ export class ScriptToVideoService {
     return full;
   }
 
+  private buildUserSegmentMediaMap(
+    request: VideoRequest,
+  ): Map<number, { objectKey: string; mediaKind: 'image' | 'video' }> {
+    const m = new Map<number, { objectKey: string; mediaKind: 'image' | 'video' }>();
+    for (const it of request.userSegmentMedia ?? []) {
+      m.set(it.segmentIndex, { objectKey: it.objectKey, mediaKind: it.mediaKind });
+    }
+    return m;
+  }
+
   async runRequestPipeline(
     request: VideoRequest,
     options?: { resume?: boolean; abortCheck?: () => Promise<boolean> },
@@ -847,6 +904,14 @@ export class ScriptToVideoService {
     const dirs = this.requestFsService.ensureRequestDirs(request.id);
     const timestamp = this.requestFsService.timestamp();
     await this.pipelineAbortIfNeeded(abortCheck);
+
+    const userSegMedia = this.buildUserSegmentMediaMap(request);
+    if (userSegMedia.size > 0 && !this.r2Service.isEnabled()) {
+      throw new Error(
+        'Video request includes user segment media but R2 is not configured on this server',
+      );
+    }
+    const skipUserPromptSegments = new Set(userSegMedia.keys());
 
     let audioPath: string | undefined;
     let generatedNewAudio = false;
@@ -899,8 +964,14 @@ export class ScriptToVideoService {
       transcription.whisperFormat?.segments?.[0]?.words || [];
     const totalDuration = words.length ? words[words.length - 1].end : 0;
     const narrationFileDurationSec = await this.probeMediaDurationSeconds(audioPath);
-    const masterTimelineEndSec = this.resolveMasterTimelineEndSec(totalDuration, narrationFileDurationSec);
-    if (Math.abs(masterTimelineEndSec - totalDuration) > 0.05 || narrationFileDurationSec > totalDuration + 0.05) {
+    const masterTimelineEndSec = this.resolveMasterTimelineEndSec(
+      totalDuration,
+      narrationFileDurationSec,
+    );
+    if (
+      Math.abs(masterTimelineEndSec - totalDuration) > 0.05 ||
+      narrationFileDurationSec > totalDuration + 0.05
+    ) {
       this.logger.log(
         `Master timeline: transcript end=${totalDuration.toFixed(3)}s, narration file=${narrationFileDurationSec.toFixed(3)}s -> mux/pad target=${masterTimelineEndSec.toFixed(3)}s`,
       );
@@ -911,8 +982,14 @@ export class ScriptToVideoService {
 
     const profileId = request.profileId || 'default_longform';
     const profile: VideoProfile = await this.profileService.getProfile(profileId);
-    const canvasDim = resolveDimensions(profile.canvas.ratio as Ratio, profile.canvas.resolution as Resolution);
-    const contentDim = resolveDimensions(profile.content.ratio as Ratio, profile.content.resolution as Resolution);
+    const canvasDim = resolveDimensions(
+      profile.canvas.ratio as Ratio,
+      profile.canvas.resolution as Resolution,
+    );
+    const contentDim = resolveDimensions(
+      profile.content.ratio as Ratio,
+      profile.content.resolution as Resolution,
+    );
     const contentX = Math.round(
       (canvasDim.width - contentDim.width) / 2 + (Number(profile.content.xOffset) || 0),
     );
@@ -951,7 +1028,9 @@ export class ScriptToVideoService {
         timings[i].duration = Math.max(0.2, totalDuration - timings[i].start);
       }
     }
-    this.logger.log(`Segment durations (gap-aware): ${timings.map((t) => t.duration.toFixed(2)).join(', ')}`);
+    this.logger.log(
+      `Segment durations (gap-aware): ${timings.map((t) => t.duration.toFixed(2)).join(', ')}`,
+    );
 
     const contentType = request.contentType || 'mixed';
     const mediaTypePerSegment: Array<'image' | 'video'> = [];
@@ -961,7 +1040,8 @@ export class ScriptToVideoService {
       for (let i = 0; i < timings.length; i += 1) mediaTypePerSegment.push('video');
     } else {
       // fallback mixed strategy (can be replaced with stronger LLM policy)
-      for (let i = 0; i < timings.length; i += 1) mediaTypePerSegment.push(i % 2 === 0 ? 'video' : 'image');
+      for (let i = 0; i < timings.length; i += 1)
+        mediaTypePerSegment.push(i % 2 === 0 ? 'video' : 'image');
     }
 
     const mediaPlan = timings.map((t, idx) => ({
@@ -981,7 +1061,14 @@ export class ScriptToVideoService {
     this.requestFsService.writeJson(path.join(dirs.meta, 'media-plan.json'), mediaPlan);
 
     // Replace template prompts with actual LLM-generated prompts (persisted in media-plan.json).
-    await this.ensureMediaPlanPrompts(mediaPlan as any, request, dirs as any, resume, abortCheck);
+    await this.ensureMediaPlanPrompts(
+      mediaPlan as any,
+      request,
+      dirs as any,
+      resume,
+      abortCheck,
+      skipUserPromptSegments,
+    );
 
     await this.pipelineAbortIfNeeded(abortCheck);
 
@@ -990,13 +1077,21 @@ export class ScriptToVideoService {
       resolution: profile.content.resolution as Resolution,
     };
 
-    const hasVideoSegments = mediaPlan.some((p) => p.mediaType === 'video');
+    const hasVideoSegments = mediaPlan.some(
+      (p) => p.mediaType === 'video' && !skipUserPromptSegments.has(p.index),
+    );
     if (hasVideoSegments) {
       const selectedVideoModel = request.videoModel || 'kling-v2.1';
-      validateKieMarketVideoModelForProfile(selectedVideoModel, kieProfileContent, request.imageModel);
+      validateKieMarketVideoModelForProfile(
+        selectedVideoModel,
+        kieProfileContent,
+        request.imageModel,
+      );
     }
 
-    const hasImageSegments = mediaPlan.some((p) => p.mediaType === 'image');
+    const hasImageSegments = mediaPlan.some(
+      (p) => p.mediaType === 'image' && !skipUserPromptSegments.has(p.index),
+    );
     if (hasImageSegments) {
       validateKieMarketImageModelForProfile(request.imageModel, kieProfileContent);
     }
@@ -1009,13 +1104,70 @@ export class ScriptToVideoService {
       const segmentOut = path.join(dirs.segments, `segment-${seg.index + 1}.mp4`);
 
       if (resume && this.segmentMp4LooksValid(segmentOut)) {
-        this.logger.log(`Resume: skip segment ${seg.index + 1} (keep ${path.basename(segmentOut)})`);
+        this.logger.log(
+          `Resume: skip segment ${seg.index + 1} (keep ${path.basename(segmentOut)})`,
+        );
+        segmentVideoPaths.push(segmentOut);
+        continue;
+      }
+
+      const userUpload = userSegMedia.get(seg.index);
+      if (userUpload) {
+        const rawPath = path.join(
+          dirs.segments,
+          `${segAssetPrefix}-userdl-${this.requestFsService.timestamp()}.bin`,
+        );
+        await this.r2Service.downloadToFile(userUpload.objectKey, rawPath);
+        try {
+          if (userUpload.mediaKind === 'image') {
+            await this.runFfmpeg([
+              '-loop',
+              '1',
+              '-i',
+              rawPath,
+              '-t',
+              String(Math.max(0.2, seg.duration)),
+              '-r',
+              '30',
+              '-vf',
+              segmentContentVf,
+              '-pix_fmt',
+              'yuv420p',
+              '-y',
+              segmentOut,
+            ]);
+          } else {
+            await this.runFfmpeg([
+              '-i',
+              rawPath,
+              '-t',
+              String(Math.max(0.2, seg.duration)),
+              '-an',
+              '-vf',
+              segmentContentVf,
+              '-pix_fmt',
+              'yuv420p',
+              '-y',
+              segmentOut,
+            ]);
+          }
+          mediaPlan[segIdx].promptUsed = 'user-upload:r2';
+        } finally {
+          try {
+            if (fs.existsSync(rawPath)) fs.unlinkSync(rawPath);
+          } catch {
+            /* ignore */
+          }
+        }
         segmentVideoPaths.push(segmentOut);
         continue;
       }
 
       if (seg.mediaType === 'image') {
-        const imgPath = path.join(dirs.segments, `${segAssetPrefix}-image-${this.requestFsService.timestamp()}.png`);
+        const imgPath = path.join(
+          dirs.segments,
+          `${segAssetPrefix}-image-${this.requestFsService.timestamp()}.png`,
+        );
         const usedPrompt = await this.generateSegmentImageWithRetries(
           imgPath,
           seg.prompt,
@@ -1029,12 +1181,18 @@ export class ScriptToVideoService {
         mediaPlan[segIdx].promptUsed = usedPrompt;
 
         await this.runFfmpeg([
-          '-loop', '1',
-          '-i', imgPath,
-          '-t', String(Math.max(0.2, seg.duration)),
-          '-r', '30',
-          '-vf', segmentContentVf,
-          '-pix_fmt', 'yuv420p',
+          '-loop',
+          '1',
+          '-i',
+          imgPath,
+          '-t',
+          String(Math.max(0.2, seg.duration)),
+          '-r',
+          '30',
+          '-vf',
+          segmentContentVf,
+          '-pix_fmt',
+          'yuv420p',
           '-y',
           segmentOut,
         ]);
@@ -1093,7 +1251,10 @@ export class ScriptToVideoService {
               // 1) Create a Grok still image task; 2) Animate it with image-to-video.
               // Note: Grok image-to-video requires either image_urls or task_id. We use task_id to avoid hosting images.
               await this.pipelineAbortIfNeeded(abortCheck);
-              const stillPrompt = await this.llmService.generateImagePrompt(seg.text, request.llmModel as any);
+              const stillPrompt = await this.llmService.generateImagePrompt(
+                seg.text,
+                request.llmModel as any,
+              );
               const stillTaskId = await this.kieAiService.createImageTask({
                 model: 'grok-imagine/text-to-image',
                 prompt: stillPrompt,
@@ -1105,7 +1266,8 @@ export class ScriptToVideoService {
                       : '9:16',
               });
 
-              const dur = chunkDuration <= 6 ? '6' : String(Math.min(30, Math.round(chunkDuration)));
+              const dur =
+                chunkDuration <= 6 ? '6' : String(Math.min(30, Math.round(chunkDuration)));
               const grokI2vRes = this.kieGrokImageToVideoResolution(
                 profile.content.resolution as Resolution,
               );
@@ -1183,11 +1345,16 @@ export class ScriptToVideoService {
           `${segAssetPrefix}-merged-${this.requestFsService.timestamp()}.mp4`,
         );
         await this.runFfmpeg([
-          '-f', 'concat',
-          '-safe', '0',
-          '-i', concatTxt,
-          '-c:v', 'libx264',
-          '-pix_fmt', 'yuv420p',
+          '-f',
+          'concat',
+          '-safe',
+          '0',
+          '-i',
+          concatTxt,
+          '-c:v',
+          'libx264',
+          '-pix_fmt',
+          'yuv420p',
           '-an',
           '-y',
           mergedPath,
@@ -1195,10 +1362,14 @@ export class ScriptToVideoService {
 
         const targetDuration = Math.max(0.2, seg.duration);
         await this.runFfmpeg([
-          '-i', mergedPath,
-          '-t', String(targetDuration),
-          '-vf', segmentContentVf,
-          '-pix_fmt', 'yuv420p',
+          '-i',
+          mergedPath,
+          '-t',
+          String(targetDuration),
+          '-vf',
+          segmentContentVf,
+          '-pix_fmt',
+          'yuv420p',
           '-y',
           segmentOut,
         ]);
@@ -1216,13 +1387,7 @@ export class ScriptToVideoService {
     const concatList = path.join(dirs.segments, `concat-final-${timestamp}.txt`);
     fs.writeFileSync(concatList, segmentVideoPaths.map((p) => `file '${p}'`).join('\n'), 'utf-8');
     const assembledVideo = path.join(dirs.final, `assembled-${timestamp}.mp4`);
-    await this.runFfmpeg([
-      '-f', 'concat',
-      '-safe', '0',
-      '-i', concatList,
-      '-y',
-      assembledVideo,
-    ]);
+    await this.runFfmpeg(['-f', 'concat', '-safe', '0', '-i', concatList, '-y', assembledVideo]);
 
     const assembledDurationSec = await this.probeMediaDurationSeconds(assembledVideo);
     const padNeededSec = masterTimelineEndSec - assembledDurationSec;
@@ -1288,7 +1453,8 @@ export class ScriptToVideoService {
       topHeadlineText = await this.llmService.deriveHeadline(request.fullScript);
     }
 
-    let bottomHeadlineText = typeof bottomStored === 'string' && bottomStored.trim() ? bottomStored.trim() : '';
+    let bottomHeadlineText =
+      typeof bottomStored === 'string' && bottomStored.trim() ? bottomStored.trim() : '';
     if (!bottomHeadlineText && profile.headline.bottom.enabled) {
       bottomHeadlineText = (profile.name || '').trim();
     }
@@ -1351,9 +1517,12 @@ export class ScriptToVideoService {
     const finalOut = path.join(dirs.final, 'final-video.mp4');
     if (filters.length) {
       await this.runFfmpeg([
-        '-i', mergedAv,
-        '-vf', filters.join(','),
-        '-c:a', 'copy',
+        '-i',
+        mergedAv,
+        '-vf',
+        filters.join(','),
+        '-c:a',
+        'copy',
         '-y',
         finalOut,
       ]);
@@ -1365,8 +1534,12 @@ export class ScriptToVideoService {
     const debugMeta = {
       requestId: request.id,
       audio: path.relative(this.requestFsService.getRequestDir(request.id), audioPath),
-      subtitle: subtitleFile ? path.relative(this.requestFsService.getRequestDir(request.id), subtitleFile) : null,
-      segments: segmentVideoPaths.map((p) => path.relative(this.requestFsService.getRequestDir(request.id), p)),
+      subtitle: subtitleFile
+        ? path.relative(this.requestFsService.getRequestDir(request.id), subtitleFile)
+        : null,
+      segments: segmentVideoPaths.map((p) =>
+        path.relative(this.requestFsService.getRequestDir(request.id), p),
+      ),
       finalVideo: 'final/final-video.mp4',
       transcriptEndSec: totalDuration,
       narrationFileDurationSec,
@@ -1375,9 +1548,41 @@ export class ScriptToVideoService {
     };
     this.requestFsService.writeJson(debugMetaPath, debugMeta);
 
+    if (this.r2Service.isEnabled()) {
+      try {
+        const localDir = this.requestFsService.getRequestDir(request.id);
+        await this.r2Service.uploadRequestDir(request.id, localDir);
+
+        const deleteLocalAfter = process.env.R2_REQUEST_DELETE_LOCAL_AFTER_UPLOAD;
+        if (deleteLocalAfter === 'true' || deleteLocalAfter === '1') {
+          try {
+            fs.rmSync(localDir, { recursive: true, force: true });
+            this.logger.log(`Cleaned up local artifacts for request ${request.id} after R2 upload`);
+          } catch (cleanupErr: unknown) {
+            this.logger.warn(
+              `Failed to clean up local artifacts for request ${request.id}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`,
+            );
+          }
+        }
+
+        return {
+          resultUrl: `r2:final/final-video.mp4`,
+          debugMetaUrl: `r2:meta/pipeline-output.json`,
+        };
+      } catch (err: unknown) {
+        this.logger.error(
+          `R2 upload failed for request ${request.id}, falling back to local: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     return {
       resultUrl: this.requestFsService.toPublicUrl(baseUrl, request.id, 'final/final-video.mp4'),
-      debugMetaUrl: this.requestFsService.toPublicUrl(baseUrl, request.id, 'meta/pipeline-output.json'),
+      debugMetaUrl: this.requestFsService.toPublicUrl(
+        baseUrl,
+        request.id,
+        'meta/pipeline-output.json',
+      ),
     };
   }
 

@@ -18,4 +18,3 @@ export class UploadMediaResponseDto {
   mediaType: 'image' | 'video' | 'audio';
   publicUrl: string; // Public URL to access the media file
 }
-

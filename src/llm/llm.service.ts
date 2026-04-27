@@ -24,6 +24,12 @@ export type GeneratedYoutubeMetadata = {
   tags: string[];
 };
 
+export type UserAssetForSegmentAssignment = {
+  objectKey: string;
+  mediaKind: 'image' | 'video';
+  assetLabel: string;
+};
+
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
@@ -45,7 +51,10 @@ export class LlmService {
     return segments.length > 0 ? segments : [fullScript.trim()].filter(Boolean);
   }
 
-  private buildSegmentationPrompt(script: string, segmentationInstructions?: string | null): string {
+  private buildSegmentationPrompt(
+    script: string,
+    segmentationInstructions?: string | null,
+  ): string {
     const lines = [
       'Split the following script into speaking segments for TTS-driven video generation.',
       'Use semantic and pacing boundaries (ideas, beats, natural pauses). Do NOT split only on every sentence boundary if that yields awkward cuts.',
@@ -146,9 +155,7 @@ export class LlmService {
       try {
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed)) return null;
-        const segments = parsed
-          .map((s) => (typeof s === 'string' ? s.trim() : ''))
-          .filter(Boolean);
+        const segments = parsed.map((s) => (typeof s === 'string' ? s.trim() : '')).filter(Boolean);
         return segments.length > 0 ? segments : null;
       } catch {
         return null;
@@ -190,10 +197,7 @@ export class LlmService {
       }
       if (!Array.isArray(parts)) continue;
       for (const block of parts) {
-        const t =
-          block?.text ??
-          block?.output_text ??
-          (typeof block === 'string' ? block : '');
+        const t = block?.text ?? block?.output_text ?? (typeof block === 'string' ? block : '');
         const type = block?.type;
         if (typeof t === 'string' && t.trim()) {
           if (!type || type === 'output_text' || type === 'text' || type === 'input_text') {
@@ -220,8 +224,7 @@ export class LlmService {
     }
 
     const inner = data?.data;
-    const payloads =
-      inner && typeof inner === 'object' && inner !== data ? [data, inner] : [data];
+    const payloads = inner && typeof inner === 'object' && inner !== data ? [data, inner] : [data];
 
     for (const payload of payloads) {
       const t = this.extractTextFromOnePayload(model, payload);
@@ -247,7 +250,8 @@ export class LlmService {
     // Top-level string helpers some gateways use
     if (typeof data?.text === 'string' && data.text.trim()) return data.text.trim();
     if (typeof data?.result === 'string' && data.result.trim()) return data.result.trim();
-    if (typeof data?.output_text === 'string' && data.output_text.trim()) return data.output_text.trim();
+    if (typeof data?.output_text === 'string' && data.output_text.trim())
+      return data.output_text.trim();
 
     // Anthropic-style
     if (Array.isArray(data?.content)) {
@@ -278,10 +282,7 @@ export class LlmService {
     return '';
   }
 
-  private async callKieModel(
-    model: SupportedLlmModel,
-    prompt: string,
-  ): Promise<string> {
+  private async callKieModel(model: SupportedLlmModel, prompt: string): Promise<string> {
     const headers = {
       Authorization: `Bearer ${this.apiKey}`,
       'Content-Type': 'application/json',
@@ -430,6 +431,182 @@ export class LlmService {
     }
   }
 
+  /**
+   * Generate Video dashboard: `manual` = segment the user's narration as-is.
+   * `article_import` = Crawl4AI markdown is first rewritten with articleToSpokenScript, then segmented (with extra segmentation context).
+   */
+  async segmentScriptForDashboard(
+    fullScript: string,
+    model: SupportedLlmModel = 'gpt-5-4',
+    options: {
+      scriptSource: 'manual' | 'article_import';
+      articleTitle?: string | null;
+      useLocalFallback?: boolean;
+      segmentationInstructions?: string | null;
+    },
+  ): Promise<{ segments: string[]; fullScript: string }> {
+    const useLocalFallback = options.useLocalFallback !== false;
+    let script = fullScript?.trim() ?? '';
+    if (!script) {
+      return { segments: [], fullScript: '' };
+    }
+
+    if (options.scriptSource === 'article_import') {
+      if (!this.apiKey) {
+        this.logger.warn(
+          'KIE_AI_API_KEY missing; article_import path will segment raw markdown without article→voiceover rewrite',
+        );
+      } else {
+        try {
+          const spoken = await this.articleToSpokenScript({
+            title: options.articleTitle?.trim() || null,
+            articleBody: script,
+            instructions: '',
+            model,
+          });
+          if (spoken?.trim()) {
+            script = spoken.trim();
+          }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          this.logger.warn(
+            `articleToSpokenScript (dashboard) failed; segmenting crawled text as-is: ${msg}`,
+          );
+        }
+      }
+    }
+
+    const fromArticleHint =
+      options.scriptSource === 'article_import'
+        ? [
+            'The following text is already plain spoken narration (converted from article or web markdown in an earlier step).',
+            'Split mainly for TTS pacing and natural pauses; keep wording and order; do not summarize or add commentary.',
+          ].join('\n')
+        : null;
+
+    const mergedSegInstructions =
+      [fromArticleHint, options.segmentationInstructions].filter((s) => s?.trim()).join('\n\n') ||
+      null;
+
+    const segments = await this.segmentScript(script, model, {
+      useLocalFallback,
+      segmentationInstructions: mergedSegInstructions,
+    });
+
+    return { segments, fullScript: script };
+  }
+
+  /**
+   * Maps user-described assets to segment indices by relevance to each segment's text.
+   * `allowedSegmentIndices` must be large enough to assign one distinct index per asset.
+   */
+  async assignUserMediaToScriptSegments(
+    segmentedScripts: string[],
+    assets: UserAssetForSegmentAssignment[],
+    model: SupportedLlmModel,
+    allowedSegmentIndices: number[],
+  ): Promise<Array<{ objectKey: string; segmentIndex: number; mediaKind: 'image' | 'video' }>> {
+    if (!assets.length) return [];
+    if (!this.apiKey) {
+      throw new Error('KIE_AI_API_KEY is not set');
+    }
+    const allowed = new Set(allowedSegmentIndices);
+    if (allowed.size < assets.length) {
+      throw new Error(
+        `Not enough free segments for auto-placement (need ${assets.length}, have ${allowed.size})`,
+      );
+    }
+    const n = segmentedScripts.length;
+    const segLines = segmentedScripts.map((text, i) => `${i}: ${text.slice(0, 900)}`);
+    const assetLines = assets.map(
+      (a) =>
+        `- objectKey=${JSON.stringify(a.objectKey)} mediaKind=${a.mediaKind} assetLabel=${JSON.stringify(a.assetLabel)}`,
+    );
+    const allowedList = [...allowed].sort((a, b) => a - b).join(', ');
+    const prompt = [
+      'You assign user-supplied images/videos to narration segments for a scripted video.',
+      `There are ${n} segments with indices 0..${n - 1}.`,
+      `You MUST assign each user asset to exactly one segment index from this allowed set only: [${allowedList}].`,
+      'Use each allowed index at most once across your assignments.',
+      '',
+      'SEGMENTS:',
+      ...segLines,
+      '',
+      'USER_ASSETS (use assetLabel to judge relevance to what is spoken in each segment):',
+      ...assetLines,
+      '',
+      'Return ONLY a JSON array of objects:',
+      '[{"objectKey":"<exact from list>","segmentIndex":<int>,"mediaKind":"image"|"video"}]',
+      'Rules:',
+      '- Every USER_ASSETS line must appear exactly once (same objectKey string).',
+      '- segmentIndex must be one of the allowed set above.',
+      '- No duplicate segmentIndex in the array.',
+      '- mediaKind must match the USER_ASSETS line.',
+      '- Prefer the segment whose text is most relevant to assetLabel.',
+    ].join('\n');
+
+    const outputText = await this.callKieModel(model, prompt);
+    const parsed = this.parseUserMediaAssignmentsFromLlm(outputText, assets, allowed);
+    if (!parsed?.length) {
+      throw new Error('LLM returned no valid user-media segment assignments');
+    }
+    return parsed;
+  }
+
+  private parseUserMediaAssignmentsFromLlm(
+    outputText: string,
+    assets: UserAssetForSegmentAssignment[],
+    allowed: Set<number>,
+  ): Array<{ objectKey: string; segmentIndex: number; mediaKind: 'image' | 'video' }> | null {
+    const stripped = outputText.replace(/```json\s*|```/gi, '').trim();
+    const tryParse = (raw: string) => {
+      try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return null;
+        const byKey = new Map(assets.map((a) => [a.objectKey, a]));
+        const out: Array<{
+          objectKey: string;
+          segmentIndex: number;
+          mediaKind: 'image' | 'video';
+        }> = [];
+        const usedSeg = new Set<number>();
+        for (const row of parsed) {
+          if (!row || typeof row !== 'object') return null;
+          const ok = row as Record<string, unknown>;
+          const objectKey = typeof ok.objectKey === 'string' ? ok.objectKey.trim() : '';
+          const mediaKind =
+            ok.mediaKind === 'image' || ok.mediaKind === 'video' ? ok.mediaKind : null;
+          const seg =
+            typeof ok.segmentIndex === 'number' && Number.isInteger(ok.segmentIndex)
+              ? ok.segmentIndex
+              : typeof ok.segmentIndex === 'string'
+                ? parseInt(ok.segmentIndex, 10)
+                : NaN;
+          if (!objectKey || !mediaKind || !Number.isFinite(seg)) return null;
+          if (!byKey.has(objectKey)) return null;
+          const src = byKey.get(objectKey)!;
+          if (src.mediaKind !== mediaKind) return null;
+          if (!allowed.has(seg)) return null;
+          if (usedSeg.has(seg)) return null;
+          usedSeg.add(seg);
+          out.push({ objectKey, segmentIndex: seg, mediaKind });
+        }
+        if (out.length !== assets.length) return null;
+        for (const a of assets) {
+          if (!out.some((o) => o.objectKey === a.objectKey)) return null;
+        }
+        return out;
+      } catch {
+        return null;
+      }
+    };
+    const direct = tryParse(stripped);
+    if (direct) return direct;
+    const bracket = stripped.match(/\[[\s\S]*\]/);
+    if (bracket) return tryParse(bracket[0]);
+    return null;
+  }
+
   async segmentScriptWithMediaPlan(
     fullScript: string,
     contentType: 'video' | 'photo' | 'mixed' = 'mixed',
@@ -531,8 +708,7 @@ export class LlmService {
       this.logger.warn('KIE_AI_API_KEY missing; generateAutomationBottomHeadline skipped');
       return null;
     }
-    const extra =
-      params.instructions?.trim() || this.defaultAutomationBottomHeadlineInstructions();
+    const extra = params.instructions?.trim() || this.defaultAutomationBottomHeadlineInstructions();
     const ctx = params.webhookTitle
       ? `Publisher headline (optional context): "${params.webhookTitle}"\n\n`
       : '';
@@ -745,8 +921,7 @@ export class LlmService {
             'Write a viewer-friendly description summarizing the video.',
           '',
           '--- Tags instructions ---',
-          params.tagsInstructions.trim() ||
-            'Suggest relevant YouTube search tags.',
+          params.tagsInstructions.trim() || 'Suggest relevant YouTube search tags.',
           '',
           '--- Video script (full) ---',
           script,

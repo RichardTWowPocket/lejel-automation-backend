@@ -21,15 +21,3 @@ export class BurnSubtitlesDto {
   @IsString()
   returnUrl?: string; // If "yes" or "true", return public URL instead of streaming file
 }
-
-
-
-
-
-
-
-
-
-
-
-

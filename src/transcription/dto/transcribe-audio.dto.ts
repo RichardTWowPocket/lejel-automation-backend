@@ -23,8 +23,3 @@ export class TranscribeAudioDto {
   @IsBoolean()
   useWhisperTimestamp?: boolean;
 }
-
-
-
-
-

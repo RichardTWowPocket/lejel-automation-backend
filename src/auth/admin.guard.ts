@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  CanActivate,
-  ExecutionContext,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 
 /**
  * Restricts access to admin only. Requires request.user to be set (e.g. by JwtAuthGuard or ApiKeyOrJwtGuard)

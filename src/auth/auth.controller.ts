@@ -25,10 +25,7 @@ export class AuthController {
 
   /** One-time: create first admin when DB is empty. Header: X-Bootstrap-Secret */
   @Post('bootstrap')
-  async bootstrap(
-    @Headers('x-bootstrap-secret') secret: string,
-    @Body() dto: BootstrapDto,
-  ) {
+  async bootstrap(@Headers('x-bootstrap-secret') secret: string, @Body() dto: BootstrapDto) {
     return this.authService.bootstrap(dto, secret || '');
   }
 
@@ -39,18 +36,13 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(JwtAuthGuard)
-  async me(
-    @ReqUser() user: { id: string; email: string; name: string; role: 'user' | 'admin' },
-  ) {
+  async me(@ReqUser() user: { id: string; email: string; name: string; role: 'user' | 'admin' }) {
     return { user };
   }
 
   @Patch('me/password')
   @UseGuards(JwtAuthGuard)
-  async changePassword(
-    @ReqUser() user: { id: string },
-    @Body() dto: ChangePasswordDto,
-  ) {
+  async changePassword(@ReqUser() user: { id: string }, @Body() dto: ChangePasswordDto) {
     await this.authService.changePassword(user.id, dto);
     return { ok: true };
   }
@@ -76,10 +68,7 @@ export class AuthController {
 
   @Delete('admin/users/:id')
   @UseGuards(JwtAuthGuard, AdminGuard)
-  async deleteUser(
-    @Param('id') id: string,
-    @ReqUser() user: { id: string },
-  ) {
+  async deleteUser(@Param('id') id: string, @ReqUser() user: { id: string }) {
     await this.authService.deleteUserByAdmin(user.id, id);
     return { ok: true };
   }

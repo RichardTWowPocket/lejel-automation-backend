@@ -60,18 +60,11 @@ export class ElevenLabsService {
     fs.writeFileSync(listPath, inputPaths.map((p) => `file '${esc(p)}'`).join('\n'), 'utf-8');
 
     await new Promise<void>((resolve, reject) => {
-      const ff = spawn('ffmpeg', [
-        '-f',
-        'concat',
-        '-safe',
-        '0',
-        '-i',
-        listPath,
-        '-c',
-        'copy',
-        '-y',
-        outputPath,
-      ], { stdio: ['ignore', 'ignore', 'pipe'] });
+      const ff = spawn(
+        'ffmpeg',
+        ['-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', '-y', outputPath],
+        { stdio: ['ignore', 'ignore', 'pipe'] },
+      );
       let stderr = '';
       ff.stderr?.on('data', (c) => {
         stderr += String(c);
@@ -118,7 +111,9 @@ export class ElevenLabsService {
       },
     );
     const buffer = Buffer.from(response.data as ArrayBuffer);
-    this.logger.log(`[ElevenLabsService] ${partLabel}: ${buffer.length} bytes, ${text.length} chars`);
+    this.logger.log(
+      `[ElevenLabsService] ${partLabel}: ${buffer.length} bytes, ${text.length} chars`,
+    );
     return buffer;
   }
 
@@ -128,7 +123,11 @@ export class ElevenLabsService {
    */
   async generateSpeech(fullText: string, voiceId: string): Promise<string> {
     const apiKey = this.getApiKey();
-    const effectiveVoiceId = (voiceId || this.configService.get<string>('ELEVENLABS_VOICE_ID') || '').trim();
+    const effectiveVoiceId = (
+      voiceId ||
+      this.configService.get<string>('ELEVENLABS_VOICE_ID') ||
+      ''
+    ).trim();
     if (!effectiveVoiceId) {
       throw new BadRequestException('voiceId is required or set ELEVENLABS_VOICE_ID');
     }
@@ -185,7 +184,9 @@ export class ElevenLabsService {
           msg = `HTTP ${status}`;
         }
         this.logger.error(`[ElevenLabsService] ElevenLabs TTS failed: ${msg}`);
-        throw new BadRequestException(`ElevenLabs API error${status ? ` (${status})` : ''}: ${msg}`);
+        throw new BadRequestException(
+          `ElevenLabs API error${status ? ` (${status})` : ''}: ${msg}`,
+        );
       }
       this.logger.error(`[ElevenLabsService] generateSpeech error: ${err.message}`, err.stack);
       throw new BadRequestException(`Generate speech failed: ${err.message}`);

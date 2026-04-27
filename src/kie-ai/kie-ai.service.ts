@@ -1,8 +1,12 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import type { Request, Response as ExpressResponse } from 'express';
+import { pipeline } from 'node:stream/promises';
+import { Readable } from 'node:stream';
 
 const KIE_BASE_URL = 'https://api.kie.ai';
+const KIE_CLAUDE_MESSAGES_URL = 'https://api.kie.ai/claude/v1/messages';
 
 export interface KieCreditResponse {
   code: number;
@@ -49,14 +53,7 @@ export type KieMarketVideoModel =
 
 export type KieZImageAspectRatio = '1:1' | '4:3' | '3:4' | '16:9' | '9:16';
 
-export type KieFluxAspectRatio =
-  | '1:1'
-  | '4:3'
-  | '3:4'
-  | '16:9'
-  | '9:16'
-  | '3:2'
-  | '2:3';
+export type KieFluxAspectRatio = '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
 
 export type KieNanoBananaProAspectRatio =
   | '1:1'
@@ -84,12 +81,7 @@ export type KieGoogleNanoBananaImageSize =
   | '21:9'
   | 'auto';
 
-export type KieGrokImagineAspectRatio =
-  | '1:1'
-  | '16:9'
-  | '9:16'
-  | '2:3'
-  | '3:2';
+export type KieGrokImagineAspectRatio = '1:1' | '16:9' | '9:16' | '2:3' | '3:2';
 
 export type KieGptImageAspectRatio = '1:1' | '2:3' | '3:2';
 
@@ -227,20 +219,102 @@ export class KieAiService {
     }
   }
 
+  /**
+   * Anthropic Messages API–compatible proxy: forwards JSON to Kie Claude endpoint
+   * and streams the upstream response back unchanged.
+   */
+  async proxyAnthropicMessages(req: Request, res: ExpressResponse): Promise<void> {
+    const kieApiKey =
+      this.configService.get<string>('KIE_API_KEY', '')?.trim() ||
+      this.configService.get<string>('KIE_AI_API_KEY', '')?.trim() ||
+      '';
+    const hasXApiKey =
+      req.headers['x-api-key'] !== undefined && String(req.headers['x-api-key']).length > 0;
+    const hasAuthorization =
+      req.headers.authorization !== undefined && String(req.headers.authorization).length > 0;
+
+    this.logger.log(
+      `Anthropic proxy target url=${KIE_CLAUDE_MESSAGES_URL} x-api-key present=${hasXApiKey} authorization present=${hasAuthorization}`,
+    );
+
+    if (!kieApiKey) {
+      res.status(503).json({
+        type: 'error',
+        error: { type: 'api_error', message: 'KIE_API_KEY is not configured' },
+      });
+      return;
+    }
+
+    let upstream: globalThis.Response;
+    try {
+      upstream = await fetch(KIE_CLAUDE_MESSAGES_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'anthropic-version': '2023-06-01',
+          Authorization: `Bearer ${kieApiKey}`,
+        },
+        body: JSON.stringify(req.body ?? {}),
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Anthropic proxy upstream request failed: ${msg}`);
+      if (!res.headersSent) {
+        res.status(502).json({
+          type: 'error',
+          error: { type: 'api_error', message: 'Upstream request failed' },
+        });
+      }
+      return;
+    }
+
+    res.status(upstream.status);
+    const hopByHop = new Set([
+      'connection',
+      'keep-alive',
+      'proxy-authenticate',
+      'proxy-authorization',
+      'te',
+      'trailer',
+      'transfer-encoding',
+      'upgrade',
+    ]);
+    upstream.headers.forEach((value, key) => {
+      if (hopByHop.has(key.toLowerCase())) return;
+      res.setHeader(key, value);
+    });
+
+    if (!upstream.body) {
+      res.end();
+      return;
+    }
+
+    const nodeStream = Readable.fromWeb(
+      upstream.body as import('stream/web').ReadableStream<Uint8Array>,
+    );
+    try {
+      await pipeline(nodeStream, res);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Anthropic proxy response stream error: ${msg}`);
+      if (!res.writableEnded) {
+        res.destroy();
+      }
+    }
+  }
+
   async getCredits(): Promise<KieCreditResponse> {
     if (!this.apiKey?.trim()) {
       throw new ServiceUnavailableException('KIE_AI_API_KEY is not configured');
     }
     try {
-      const { data } = await axios.get<KieCreditResponse>(
-        `${KIE_BASE_URL}/api/v1/chat/credit`,
-        { headers: { Authorization: `Bearer ${this.apiKey}` } },
-      );
+      const { data } = await axios.get<KieCreditResponse>(`${KIE_BASE_URL}/api/v1/chat/credit`, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+      });
       return data;
     } catch (err: unknown) {
       const ax = err as { response?: { data?: { msg?: string } }; message?: string };
-      const msg =
-        ax?.response?.data?.msg || ax?.message || 'Failed to fetch Kie.ai credits';
+      const msg = ax?.response?.data?.msg || ax?.message || 'Failed to fetch Kie.ai credits';
       this.logger.warn(`Kie credit check failed: ${msg}`);
       throw new ServiceUnavailableException(msg);
     }
@@ -302,7 +376,9 @@ export class KieAiService {
       const hasUrls = Array.isArray(input.image_urls) && input.image_urls.length > 0;
       const hasTask = typeof input.task_id === 'string' && input.task_id.trim().length > 0;
       if (hasUrls && hasTask) {
-        throw new Error(`Kie model 'grok-imagine/image-to-video': provide either image_urls or task_id, not both`);
+        throw new Error(
+          `Kie model 'grok-imagine/image-to-video': provide either image_urls or task_id, not both`,
+        );
       }
       if (!hasUrls && !hasTask) {
         throw new Error(`Kie model 'grok-imagine/image-to-video' requires image_urls or task_id`);
@@ -341,9 +417,7 @@ export class KieAiService {
     const resultJson = details?.data?.resultJson ? JSON.parse(details.data.resultJson) : null;
 
     const url: string | undefined =
-      resultJson?.resultUrls?.[0] ||
-      resultJson?.resultUrl ||
-      resultJson?.url;
+      resultJson?.resultUrls?.[0] || resultJson?.resultUrl || resultJson?.url;
 
     if (!url) {
       throw new Error('Kie task success but no result url found in resultJson');
@@ -398,7 +472,10 @@ export class KieAiService {
         },
       });
     }
-    if (params.model === 'flux-2/pro-text-to-image' || params.model === 'flux-2/flex-text-to-image') {
+    if (
+      params.model === 'flux-2/pro-text-to-image' ||
+      params.model === 'flux-2/flex-text-to-image'
+    ) {
       const prompt = params.prompt.trim().slice(0, 5000);
       return this.postCreateTask({
         model: params.model,

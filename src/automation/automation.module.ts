@@ -14,12 +14,7 @@ import { AutomationWebhookController } from './automation-webhook.controller';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      AutomationChannel,
-      AutomationRun,
-      OAuthCredential,
-      User,
-    ]),
+    TypeOrmModule.forFeature([AutomationChannel, AutomationRun, OAuthCredential, User]),
     LlmModule,
     ProfileModule,
     forwardRef(() => VideoRequestModule),

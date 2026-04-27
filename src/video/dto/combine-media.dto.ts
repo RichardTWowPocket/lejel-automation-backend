@@ -1,4 +1,12 @@
-import { IsArray, IsNotEmpty, ValidateNested, IsString, IsNumber, IsOptional, IsEnum } from 'class-validator';
+import {
+  IsArray,
+  IsNotEmpty,
+  ValidateNested,
+  IsString,
+  IsNumber,
+  IsOptional,
+  IsEnum,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum MediaType {
@@ -70,4 +78,3 @@ export class CombineMediaDto {
   @IsOptional()
   asyncMode?: string | boolean; // If "yes", "true", or true, return job ID immediately and process in background
 }
-

@@ -19,10 +19,7 @@ export type UploadMediaResult = {
 export class UploadMediaService {
   constructor(private readonly config: ConfigService) {}
 
-  async uploadFromFile(
-    file: Express.Multer.File,
-    formatHint?: string,
-  ): Promise<UploadMediaResult> {
+  async uploadFromFile(file: Express.Multer.File, formatHint?: string): Promise<UploadMediaResult> {
     if (!file?.buffer && !file?.path) {
       throw new BadRequestException('file is required');
     }
@@ -32,9 +29,17 @@ export class UploadMediaService {
       throw new BadRequestException(`File too large (max ${MAX_SIZE / 1024 / 1024}MB)`);
     }
 
-    let ext = path.extname(file.originalname || '')?.toLowerCase().replace(/[^a-z0-9.]/g, '');
+    let ext = path
+      .extname(file.originalname || '')
+      ?.toLowerCase()
+      .replace(/[^a-z0-9.]/g, '');
     if (!ext && formatHint) {
-      ext = '.' + formatHint.replace(/^\./, '').toLowerCase().replace(/[^a-z0-9]/g, '') || '.bin';
+      ext =
+        '.' +
+          formatHint
+            .replace(/^\./, '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '') || '.bin';
     }
     if (!ext) ext = '.bin';
 
@@ -95,7 +100,8 @@ export class UploadMediaService {
     const baseUrl = this.config.get<string>('BASE_URL', 'http://localhost:3000');
     const publicUrl = `${baseUrl.replace(/\/$/, '')}/media/${fileName}`;
 
-    const mimeType = response.headers['content-type']?.split(';')[0]?.trim() || 'application/octet-stream';
+    const mimeType =
+      response.headers['content-type']?.split(';')[0]?.trim() || 'application/octet-stream';
 
     return {
       publicUrl,

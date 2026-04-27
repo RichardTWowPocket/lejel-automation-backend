@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   DefaultValuePipe,
@@ -30,6 +31,15 @@ export class AutomationAdminController {
   @Post()
   create(@Body() dto: CreateAutomationChannelDto) {
     return this.automationService.createChannel(dto);
+  }
+
+  /** Aggregate run stats for the admin dashboard (must stay above :id routes). */
+  @Get('stats')
+  getDashboardStats(@Query('from') from: string, @Query('to') to: string) {
+    if (!from?.trim() || !to?.trim()) {
+      throw new BadRequestException('Query parameters from and to are required (ISO 8601 dates)');
+    }
+    return this.automationService.getDashboardStats(from.trim(), to.trim());
   }
 
   @Get(':id/runs')

@@ -12,7 +12,9 @@ export class EncryptionService {
   private readonly key: Buffer;
 
   constructor(private config: ConfigService) {
-    const secret = this.config.get<string>('OAUTH_ENCRYPTION_KEY') || 'default-key-change-in-production-32bytes!!';
+    const secret =
+      this.config.get<string>('OAUTH_ENCRYPTION_KEY') ||
+      'default-key-change-in-production-32bytes!!';
     this.key = crypto.scryptSync(secret, 'lejel-oauth-salt', KEY_LENGTH);
   }
 

@@ -74,10 +74,7 @@ export class OAuthController {
    */
   @Patch('google-clients/:id')
   @UseGuards(JwtAuthGuard, AdminGuard)
-  async setGoogleClientEnabled(
-    @Param('id') id: string,
-    @Body('enabled') enabled: boolean,
-  ) {
+  async setGoogleClientEnabled(@Param('id') id: string, @Body('enabled') enabled: boolean) {
     if (typeof enabled !== 'boolean') {
       throw new BadRequestException('enabled must be a boolean');
     }
@@ -122,7 +119,9 @@ export class OAuthController {
         message: 'Connection created. Now complete the OAuth flow via /google/authorize',
       };
     }
-    throw new BadRequestException('Provide googleClientId (or clientId and clientSecret for legacy)');
+    throw new BadRequestException(
+      'Provide googleClientId (or clientId and clientSecret for legacy)',
+    );
   }
 
   /**
@@ -176,18 +175,26 @@ export class OAuthController {
     const fallbackRedirect = successRedirect || baseUrl;
 
     if (!code) {
-      return res.redirect(`${fallbackRedirect}${fallbackRedirect.includes('?') ? '&' : '?'}oauth=error&message=missing_code`);
+      return res.redirect(
+        `${fallbackRedirect}${fallbackRedirect.includes('?') ? '&' : '?'}oauth=error&message=missing_code`,
+      );
     }
     if (!credentialId) {
-      return res.redirect(`${fallbackRedirect}${fallbackRedirect.includes('?') ? '&' : '?'}oauth=error&message=invalid_state`);
+      return res.redirect(
+        `${fallbackRedirect}${fallbackRedirect.includes('?') ? '&' : '?'}oauth=error&message=invalid_state`,
+      );
     }
     try {
       const callbackUrl = `${baseUrl.replace(/\/$/, '')}/api/oauth/google/callback`;
       await this.oauth.exchangeCodeForTokens(code, callbackUrl, credentialId);
-      return res.redirect(`${fallbackRedirect}${fallbackRedirect.includes('?') ? '&' : '?'}oauth=success&connectionId=${credentialId}`);
+      return res.redirect(
+        `${fallbackRedirect}${fallbackRedirect.includes('?') ? '&' : '?'}oauth=success&connectionId=${credentialId}`,
+      );
     } catch (err: any) {
       const errMsg = encodeURIComponent(err.message || 'OAuth failed');
-      return res.redirect(`${fallbackRedirect}${fallbackRedirect.includes('?') ? '&' : '?'}oauth=error&message=${errMsg}`);
+      return res.redirect(
+        `${fallbackRedirect}${fallbackRedirect.includes('?') ? '&' : '?'}oauth=error&message=${errMsg}`,
+      );
     }
   }
 

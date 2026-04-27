@@ -20,15 +20,17 @@ export class ContainerManagerService {
   async ensureContainerRunning(): Promise<void> {
     try {
       const container = this.docker.getContainer(this.containerName);
-      
+
       try {
         const inspect = await container.inspect();
-        
+
         if (!inspect.State.Running) {
           this.logger.log(`Container ${this.containerName} is not running. Starting...`);
           await container.start();
-          this.logger.log(`Container ${this.containerName} start command sent, waiting for readiness...`);
-          
+          this.logger.log(
+            `Container ${this.containerName} start command sent, waiting for readiness...`,
+          );
+
           // Wait for container to be ready (health check)
           await this.waitForContainerReady(container, 180); // 3 minutes max wait (model loading takes time)
           this.logger.log(`Container ${this.containerName} started and ready`);
@@ -49,7 +51,9 @@ export class ContainerManagerService {
       } catch (error: any) {
         if (error.statusCode === 404) {
           // Container doesn't exist - try to create it via docker-compose
-          this.logger.warn(`Container ${this.containerName} not found. Attempting to start via docker-compose...`);
+          this.logger.warn(
+            `Container ${this.containerName} not found. Attempting to start via docker-compose...`,
+          );
           try {
             const { execSync } = require('child_process');
             // whisper-worker is now a shared service - start it from shared directory
@@ -91,15 +95,17 @@ export class ContainerManagerService {
     const checkInterval = 5000; // Check every 5 seconds
     const whisperServiceUrl = process.env.WHISPER_SERVICE_URL || 'http://whisper-worker:8000';
     let lastError: any = null;
-    
+
     this.logger.log(`Waiting up to ${maxWaitSeconds}s for container to be ready...`);
-    
+
     while (Date.now() - startTime < maxWaitSeconds * 1000) {
       try {
         const inspect = await container.inspect();
-        
+
         if (!inspect.State.Running) {
-          this.logger.warn(`Container ${this.containerName} is not running (status: ${inspect.State.Status})`);
+          this.logger.warn(
+            `Container ${this.containerName} is not running (status: ${inspect.State.Status})`,
+          );
           if (inspect.State.ExitCode !== 0) {
             throw new Error(`Container exited with code ${inspect.State.ExitCode}`);
           }
@@ -107,7 +113,7 @@ export class ContainerManagerService {
           await container.start();
           continue;
         }
-        
+
         // Try to hit the health endpoint
         try {
           const axios = require('axios');
@@ -115,17 +121,25 @@ export class ContainerManagerService {
             timeout: 10000,
             validateStatus: () => true, // Accept any status
           });
-          
-          if (response.status === 200 && response.data?.status === 'ok' && response.data?.model_loaded) {
+
+          if (
+            response.status === 200 &&
+            response.data?.status === 'ok' &&
+            response.data?.model_loaded
+          ) {
             this.logger.log('Container is ready and responding to health checks');
             return;
           } else {
-            lastError = new Error(`Health check returned status ${response.status}, model_loaded: ${response.data?.model_loaded}`);
+            lastError = new Error(
+              `Health check returned status ${response.status}, model_loaded: ${response.data?.model_loaded}`,
+            );
           }
         } catch (healthError: any) {
           lastError = healthError;
           if (healthError.code === 'ECONNREFUSED' || healthError.code === 'EAI_AGAIN') {
-            this.logger.debug(`Health check failed (${healthError.code}): Container might still be loading model...`);
+            this.logger.debug(
+              `Health check failed (${healthError.code}): Container might still be loading model...`,
+            );
           } else {
             this.logger.debug(`Health check attempt failed: ${healthError.message}`);
           }
@@ -134,18 +148,17 @@ export class ContainerManagerService {
         lastError = error;
         this.logger.debug(`Waiting for container to be ready... (${error.message})`);
       }
-      
+
       const elapsed = Math.floor((Date.now() - startTime) / 1000);
       this.logger.debug(`Still waiting... (${elapsed}s/${maxWaitSeconds}s)`);
       await new Promise((resolve) => setTimeout(resolve, checkInterval));
     }
-    
-    const errorMsg = lastError 
+
+    const errorMsg = lastError
       ? `Container did not become ready within ${maxWaitSeconds}s. Last error: ${lastError.message || lastError.code}`
       : `Container did not become ready within ${maxWaitSeconds}s`;
-    
+
     this.logger.error(errorMsg);
     throw new ServiceUnavailableException(errorMsg);
   }
 }
-

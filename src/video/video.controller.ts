@@ -6,9 +6,7 @@ import { ScriptToVideoService } from './script-to-video.service';
 @Controller('api/video')
 @UseGuards(ApiKeyOrJwtGuard)
 export class VideoController {
-  constructor(
-    private readonly scriptToVideoService: ScriptToVideoService,
-  ) {}
+  constructor(private readonly scriptToVideoService: ScriptToVideoService) {}
 
   @Get('health')
   health() {

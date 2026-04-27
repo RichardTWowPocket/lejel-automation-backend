@@ -10,6 +10,15 @@ import {
 import { User } from './user.entity';
 
 export type YoutubeUploadMode = 'none' | 'pending_approval' | 'direct';
+
+/** User-provided segment visuals (R2 object keys); segmentIndex matches segmentedScripts order (0-based). */
+export type UserSegmentMediaItem = {
+  segmentIndex: number;
+  objectKey: string;
+  mediaKind: 'image' | 'video';
+  /** Human description so placement can be LLM-matched to script (optional for older rows). */
+  assetLabel?: string;
+};
 export type VideoRequestStatus =
   | 'draft'
   | 'pending'
@@ -40,11 +49,18 @@ export class VideoRequest {
   @Column('simple-json')
   segmentedScripts: string[];
 
+  /** Optional: per-segment R2 uploads (Generate video); pipeline skips Kie for listed indices. */
+  @Column('simple-json', { nullable: true })
+  userSegmentMedia: UserSegmentMediaItem[] | null;
+
   @Column({ type: 'varchar', length: 64, default: 'pending' })
   status: VideoRequestStatus;
 
   @Column({ type: 'varchar', length: 32, default: 'none' })
   youtubeUploadMode: YoutubeUploadMode;
+
+  @Column({ type: 'varchar', length: 32, default: 'local' })
+  storageBackend: 'local' | 'r2';
 
   @Column({ type: 'varchar', length: 64, nullable: true })
   contentType: string | null;

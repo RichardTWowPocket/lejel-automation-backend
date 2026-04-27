@@ -11,13 +11,23 @@ import { Repository } from 'typeorm';
 import { Queue } from 'bullmq';
 import * as fs from 'fs';
 import * as path from 'path';
-import { VideoRequest, VideoRequestStatus } from '../entities/video-request.entity';
-import { LlmService, SupportedLlmModel } from '../llm/llm.service';
+import {
+  VideoRequest,
+  VideoRequestStatus,
+  UserSegmentMediaItem,
+} from '../entities/video-request.entity';
+import {
+  LlmService,
+  SupportedLlmModel,
+  type UserAssetForSegmentAssignment,
+} from '../llm/llm.service';
 import { YouTubeService } from '../oauth/youtube.service';
 import { CreateVideoRequestDto } from './dto/create-video-request.dto';
 import { UpdateVideoRequestDto } from './dto/update-video-request.dto';
 import { VIDEO_GENERATION_JOB, VIDEO_GENERATION_QUEUE } from './video-request.queue';
 import { RequestFsService } from '../video/request-fs.service';
+import { R2Service } from '../media/r2.service';
+import { UserSegmentMediaItemDto } from './dto/user-segment-media-item.dto';
 
 @Injectable()
 export class VideoRequestService {
@@ -28,9 +38,120 @@ export class VideoRequestService {
     private readonly llmService: LlmService,
     private readonly youTubeService: YouTubeService,
     private readonly requestFsService: RequestFsService,
+    private readonly r2Service: R2Service,
     @InjectQueue(VIDEO_GENERATION_QUEUE)
     private readonly videoGenerationQueue: Queue,
   ) {}
+
+  private async resolveUserSegmentMedia(
+    userId: string,
+    items: UserSegmentMediaItemDto[] | undefined,
+    segmentedScripts: string[],
+    model: SupportedLlmModel,
+  ): Promise<UserSegmentMediaItem[] | null> {
+    if (!items?.length) return null;
+    if (!this.r2Service.isEnabled()) {
+      throw new BadRequestException(
+        'User segment media requires R2 to be configured on the server',
+      );
+    }
+
+    type Draft = {
+      objectKey: string;
+      mediaKind: 'image' | 'video';
+      assetLabel: string;
+      segmentIndex?: number;
+    };
+    const drafts: Draft[] = [];
+    for (const it of items) {
+      const key = it.objectKey.trim();
+      const label = it.assetLabel.trim();
+      if (label.length < 3) {
+        throw new BadRequestException(
+          'Each user asset must include assetLabel (at least 3 characters) describing the image or clip',
+        );
+      }
+      try {
+        this.r2Service.assertKeyOwnedByUser(key, userId);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new BadRequestException(msg);
+      }
+      drafts.push({
+        objectKey: key,
+        mediaKind: it.mediaKind,
+        assetLabel: label,
+        ...(typeof it.segmentIndex === 'number' ? { segmentIndex: it.segmentIndex } : {}),
+      });
+    }
+
+    const manual: UserSegmentMediaItem[] = [];
+    const taken = new Set<number>();
+    const autoInputs: UserAssetForSegmentAssignment[] = [];
+
+    for (const d of drafts) {
+      if (typeof d.segmentIndex === 'number') {
+        const idx = d.segmentIndex;
+        if (idx < 0 || idx >= segmentedScripts.length) {
+          throw new BadRequestException(
+            `userSegmentMedia.segmentIndex ${idx} is out of range (0..${segmentedScripts.length - 1})`,
+          );
+        }
+        if (taken.has(idx)) {
+          throw new BadRequestException(`Duplicate userSegmentMedia for segmentIndex ${idx}`);
+        }
+        taken.add(idx);
+        manual.push({
+          segmentIndex: idx,
+          objectKey: d.objectKey,
+          mediaKind: d.mediaKind,
+          assetLabel: d.assetLabel,
+        });
+      } else {
+        autoInputs.push({
+          objectKey: d.objectKey,
+          mediaKind: d.mediaKind,
+          assetLabel: d.assetLabel,
+        });
+      }
+    }
+
+    const allowedForAuto = segmentedScripts.map((_, i) => i).filter((i) => !taken.has(i));
+    let autoResolved: Array<{
+      objectKey: string;
+      segmentIndex: number;
+      mediaKind: 'image' | 'video';
+    }> = [];
+    if (autoInputs.length > 0) {
+      try {
+        autoResolved = await this.llmService.assignUserMediaToScriptSegments(
+          segmentedScripts,
+          autoInputs,
+          model,
+          allowedForAuto,
+        );
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new BadRequestException(`Could not auto-place user media: ${msg}`);
+      }
+    }
+
+    const merged: UserSegmentMediaItem[] = [...manual];
+    for (const a of autoResolved) {
+      if (taken.has(a.segmentIndex)) {
+        throw new BadRequestException('Auto-assigned segment conflicts with a manual assignment');
+      }
+      taken.add(a.segmentIndex);
+      const src = autoInputs.find((x) => x.objectKey === a.objectKey);
+      merged.push({
+        segmentIndex: a.segmentIndex,
+        objectKey: a.objectKey,
+        mediaKind: a.mediaKind,
+        assetLabel: src?.assetLabel,
+      });
+    }
+    return merged.length ? merged : null;
+  }
 
   private listFilesSafe(dirPath: string): string[] {
     try {
@@ -53,7 +174,69 @@ export class VideoRequestService {
     }
   }
 
-  private toResponse(vr: VideoRequest) {
+  private async toResponse(vr: VideoRequest) {
+    const effectiveBackend =
+      vr.storageBackend === 'r2'
+        ? 'r2'
+        : (await this.r2Service.hasRequestArtifacts(vr.id))
+          ? ('r2' as const)
+          : ('local' as const);
+
+    const resolveResultUrl = async (): Promise<string | undefined> => {
+      if (!vr.resultUrl) return undefined;
+      if (effectiveBackend === 'r2') {
+        const r2Path = vr.resultUrl.startsWith('http')
+          ? vr.resultUrl.replace(new RegExp(`.*/requests/${vr.id}/`), '')
+          : vr.resultUrl;
+        try {
+          return await this.r2Service.presignGetRequestUrl(vr.id, r2Path);
+        } catch {
+          return this.requestFsService.toPublicUrl(
+            this.configService.get<string>('BASE_URL') || 'http://localhost:3000',
+            vr.id,
+            r2Path,
+          );
+        }
+      }
+      return vr.resultUrl;
+    };
+    const resolveFinalUrl = async (): Promise<string | undefined> => {
+      if (!vr.finalUrl) return undefined;
+      if (effectiveBackend === 'r2') {
+        const r2Path = vr.finalUrl.startsWith('http')
+          ? vr.finalUrl.replace(new RegExp(`.*/requests/${vr.id}/`), '')
+          : vr.finalUrl;
+        try {
+          return await this.r2Service.presignGetRequestUrl(vr.id, r2Path);
+        } catch {
+          return this.requestFsService.toPublicUrl(
+            this.configService.get<string>('BASE_URL') || 'http://localhost:3000',
+            vr.id,
+            r2Path,
+          );
+        }
+      }
+      return vr.finalUrl;
+    };
+    const resolveMetaUrl = async (): Promise<string | undefined> => {
+      if (!vr.debugMetaUrl) return undefined;
+      if (effectiveBackend === 'r2') {
+        const r2Path = vr.debugMetaUrl.startsWith('http')
+          ? vr.debugMetaUrl.replace(new RegExp(`.*/requests/${vr.id}/`), '')
+          : vr.debugMetaUrl;
+        try {
+          return await this.r2Service.presignGetRequestUrl(vr.id, r2Path);
+        } catch {
+          return this.requestFsService.toPublicUrl(
+            this.configService.get<string>('BASE_URL') || 'http://localhost:3000',
+            vr.id,
+            r2Path,
+          );
+        }
+      }
+      return vr.debugMetaUrl;
+    };
+
     return {
       id: vr.id,
       fullScript: vr.fullScript,
@@ -64,7 +247,7 @@ export class VideoRequestService {
       updatedAt: vr.updatedAt,
       submittedAt: vr.submittedAt,
       completedAt: vr.completedAt,
-      resultUrl: vr.resultUrl,
+      resultUrl: await resolveResultUrl(),
       errorMessage: vr.errorMessage,
       connectionId: vr.connectionId || undefined,
       youtubeUploadMode: vr.youtubeUploadMode,
@@ -72,13 +255,15 @@ export class VideoRequestService {
       profileId: vr.profileId || undefined,
       imageModel: vr.imageModel || undefined,
       videoModel: vr.videoModel || undefined,
+      userSegmentMedia: vr.userSegmentMedia?.length ? vr.userSegmentMedia : undefined,
       topHeadlineText: vr.topHeadlineText || undefined,
       bottomHeadlineText: vr.bottomHeadlineText || undefined,
-      finalUrl: vr.finalUrl || undefined,
-      debugMetaUrl: vr.debugMetaUrl || undefined,
+      finalUrl: await resolveFinalUrl(),
+      debugMetaUrl: await resolveMetaUrl(),
       youtubeUrl: vr.youtubeUrl || undefined,
       youtubeVideoId: vr.youtubeVideoId || undefined,
       youtubeApprovalRejectedAt: vr.youtubeApprovalRejectedAt || undefined,
+      storageBackend: vr.storageBackend,
       user: vr.user ? { id: vr.user.id, name: vr.user.name, email: vr.user.email } : undefined,
       createdBy: vr.user ? { id: vr.user.id, name: vr.user.name, email: vr.user.email } : undefined,
     };
@@ -98,6 +283,13 @@ export class VideoRequestService {
     if (!segmentedScripts || segmentedScripts.length === 0) {
       throw new BadRequestException('Failed to generate script segments');
     }
+
+    const userSegmentMedia = await this.resolveUserSegmentMedia(
+      userId,
+      dto.userSegmentMedia,
+      segmentedScripts,
+      model,
+    );
 
     const youtubeUploadMode = dto.youtubeUploadMode || 'none';
     if (youtubeUploadMode !== 'none' && !dto.connectionId) {
@@ -125,6 +317,7 @@ export class VideoRequestService {
       youtubeDescription: dto.youtubeDescription || null,
       youtubeTags: dto.youtubeTags || null,
       youtubePrivacyStatus: dto.youtubePrivacyStatus || 'private',
+      userSegmentMedia,
     });
     const saved = await this.videoRequestRepository.save(request);
     await this.enqueueGenerationJob(saved.id, {
@@ -199,12 +392,14 @@ export class VideoRequestService {
   }
 
   async markCompleted(id: string, finalUrl?: string, debugMetaUrl?: string): Promise<void> {
+    const isR2 = finalUrl?.startsWith('r2:');
     await this.videoRequestRepository.update(id, {
       status: 'completed',
       completedAt: new Date(),
-      resultUrl: finalUrl || null,
-      finalUrl: finalUrl || null,
-      debugMetaUrl: debugMetaUrl || null,
+      resultUrl: isR2 ? finalUrl!.replace(/^r2:/, '') : finalUrl || null,
+      finalUrl: isR2 ? finalUrl!.replace(/^r2:/, '') : finalUrl || null,
+      debugMetaUrl: isR2 ? debugMetaUrl?.replace(/^r2:/, '') : debugMetaUrl || null,
+      storageBackend: isR2 ? 'r2' : 'local',
       errorMessage: null,
     });
   }
@@ -213,11 +408,31 @@ export class VideoRequestService {
    * After a render finishes with resultUrl: pending_approval → status update; direct → upload to YouTube.
    * Idempotent if youtubeVideoId already set. Used by the Bull worker and external callback.
    */
+  private async resolveStorageUrl(
+    requestId: string,
+    stored: string | null | undefined,
+    backend: 'local' | 'r2',
+  ): Promise<string> {
+    if (!stored) return '';
+    const clean = stored.startsWith('r2:') ? stored.replace(/^r2:/, '') : stored;
+    if (backend === 'r2') {
+      return this.r2Service.presignGetRequestUrl(requestId, clean);
+    }
+    return clean;
+  }
+
   async finalizeYoutubeAfterRender(requestId: string, resultUrl: string): Promise<void> {
     if (!resultUrl?.trim()) return;
     const request = await this.videoRequestRepository.findOne({ where: { id: requestId } });
     if (!request?.connectionId) return;
     if (request.youtubeVideoId) return;
+
+    const downloadableUrl = await this.resolveStorageUrl(
+      requestId,
+      resultUrl,
+      request.storageBackend,
+    );
+    if (!downloadableUrl) return;
 
     if (request.youtubeUploadMode === 'pending_approval') {
       await this.videoRequestRepository.update(requestId, {
@@ -230,7 +445,7 @@ export class VideoRequestService {
 
     try {
       const videoId = await this.youTubeService.uploadVideoFromUrl(
-        resultUrl,
+        downloadableUrl,
         {
           title:
             request.youtubeTitle ||
@@ -291,7 +506,7 @@ export class VideoRequestService {
     }
 
     const list = await qb.getMany();
-    return list.map((vr) => this.toResponse(vr));
+    return Promise.all(list.map((vr) => this.toResponse(vr)));
   }
 
   async findOne(id: string, userId: string, options?: { isAdmin?: boolean }) {
@@ -324,78 +539,151 @@ export class VideoRequestService {
 
     const baseUrl = this.configService.get<string>('BASE_URL') || 'http://localhost:3000';
     const rootDir = this.requestFsService.getRequestDir(id);
-    const audioDir = path.join(rootDir, 'audio');
-    const transcriptDir = path.join(rootDir, 'transcript');
-    const subtitlesDir = path.join(rootDir, 'subtitles');
-    const segmentsDir = path.join(rootDir, 'segments');
-    const finalDir = path.join(rootDir, 'final');
-    const metaDir = path.join(rootDir, 'meta');
 
-    const audioFiles = this.listFilesSafe(audioDir);
-    const transcriptFiles = this.listFilesSafe(transcriptDir);
-    const subtitleFiles = this.listFilesSafe(subtitlesDir);
-    const segmentFiles = this.listFilesSafe(segmentsDir);
-    const finalFiles = this.listFilesSafe(finalDir);
-    const metaFiles = this.listFilesSafe(metaDir);
+    const useR2 = await this.r2Service.hasRequestArtifacts(id);
 
-    const segmentTiming = this.readJsonSafe<
-      Array<{ index: number; text: string; start: number; end: number; duration: number }>
-    >(path.join(metaDir, 'segment-timing.json')) || [];
-    const mediaPlan = this.readJsonSafe<
-      Array<{
-        index: number;
-        mediaType: 'image' | 'video';
-        prompt?: string;
-        promptUsed?: string | null;
-        imageModel?: string;
-        videoModel?: string;
-      }>
-    >(path.join(metaDir, 'media-plan.json')) || [];
+    let audioFiles: string[];
+    let transcriptFiles: string[];
+    let subtitleFiles: string[];
+    let segmentFiles: string[];
+    let finalFiles: string[];
+    let metaFiles: string[];
 
-    const toUrl = (subdir: string, filename: string) =>
-      this.requestFsService.toPublicUrl(baseUrl, id, `${subdir}/${filename}`);
+    if (useR2) {
+      audioFiles = await this.r2Service.listRequestFiles(id, 'audio');
+      transcriptFiles = await this.r2Service.listRequestFiles(id, 'transcript');
+      subtitleFiles = await this.r2Service.listRequestFiles(id, 'subtitles');
+      segmentFiles = await this.r2Service.listRequestFiles(id, 'segments');
+      finalFiles = await this.r2Service.listRequestFiles(id, 'final');
+      metaFiles = await this.r2Service.listRequestFiles(id, 'meta');
+    } else {
+      const audioDir = path.join(rootDir, 'audio');
+      const transcriptDir = path.join(rootDir, 'transcript');
+      const subtitlesDir = path.join(rootDir, 'subtitles');
+      const segmentsDir = path.join(rootDir, 'segments');
+      const finalDir = path.join(rootDir, 'final');
+      const metaDir = path.join(rootDir, 'meta');
 
-    const audioUrls = audioFiles.map((f) => toUrl('audio', f));
-    const transcriptUrls = transcriptFiles.map((f) => toUrl('transcript', f));
-    const subtitleUrls = subtitleFiles.map((f) => toUrl('subtitles', f));
-    const finalUrls = finalFiles.map((f) => toUrl('final', f));
-    const metaUrls = metaFiles.map((f) => toUrl('meta', f));
-    const segmentVideoUrls = segmentFiles
-      .filter((f) => /^segment-\d+\.mp4$/i.test(f))
-      .map((f) => toUrl('segments', f));
+      audioFiles = this.listFilesSafe(audioDir);
+      transcriptFiles = this.listFilesSafe(transcriptDir);
+      subtitleFiles = this.listFilesSafe(subtitlesDir);
+      segmentFiles = this.listFilesSafe(segmentsDir);
+      finalFiles = this.listFilesSafe(finalDir);
+      metaFiles = this.listFilesSafe(metaDir);
+    }
 
-    const segmentArtifacts = request.segmentedScripts.map((text, idx) => {
-      const oneBased = idx + 1;
-      const imageCandidates = segmentFiles
-        .filter((f) => f.startsWith(`segment${oneBased}-image-`) && /\.(png|jpg|jpeg|webp)$/i.test(f))
-        .sort();
-      const videoCandidates = segmentFiles
-        .filter((f) => f.startsWith(`segment${oneBased}-video-`) && f.endsWith('.mp4'))
-        .sort();
-      const mergedCandidates = segmentFiles
-        .filter((f) => f.startsWith(`segment${oneBased}-merged-`) && f.endsWith('.mp4'))
-        .sort();
-      const finalSegment = `segment-${oneBased}.mp4`;
+    const metaJsonDir = useR2 ? '' : path.join(rootDir, 'meta');
 
-      const timing = segmentTiming.find((t) => t.index === idx);
-      const plan = mediaPlan.find((m) => m.index === idx);
+    const segmentTiming = useR2
+      ? (await this.r2Service.readRequestJson<
+          Array<{ index: number; text: string; start: number; end: number; duration: number }>
+        >(id, 'meta/segment-timing.json')) || []
+      : this.readJsonSafe<
+          Array<{ index: number; text: string; start: number; end: number; duration: number }>
+        >(path.join(metaJsonDir, 'segment-timing.json')) || [];
 
-      return {
-        index: idx,
-        text,
-        timing: timing || null,
-        mediaType: plan?.mediaType || null,
-        prompt: plan?.promptUsed || plan?.prompt || null,
-        imageModel: plan?.imageModel || null,
-        videoModel: plan?.videoModel || null,
-        imageUrls: imageCandidates.map((f) => toUrl('segments', f)),
-        generatedChunkVideoUrls: videoCandidates.map((f) => toUrl('segments', f)),
-        mergedVideoUrls: mergedCandidates.map((f) => toUrl('segments', f)),
-        finalSegmentUrl: segmentFiles.includes(finalSegment)
-          ? toUrl('segments', finalSegment)
-          : null,
-      };
-    });
+    const mediaPlan = useR2
+      ? (await this.r2Service.readRequestJson<
+          Array<{
+            index: number;
+            mediaType: 'image' | 'video';
+            prompt?: string;
+            promptUsed?: string | null;
+            imageModel?: string;
+            videoModel?: string;
+          }>
+        >(id, 'meta/media-plan.json')) || []
+      : this.readJsonSafe<
+          Array<{
+            index: number;
+            mediaType: 'image' | 'video';
+            prompt?: string;
+            promptUsed?: string | null;
+            imageModel?: string;
+            videoModel?: string;
+          }>
+        >(path.join(metaJsonDir, 'media-plan.json')) || [];
+
+    const resolveUrls = async (subdir: string, files: string[]): Promise<string[]> => {
+      if (useR2) {
+        return Promise.all(
+          files.map((f) => this.r2Service.presignGetRequestUrl(id, `${subdir}/${f}`)),
+        );
+      }
+      return files.map((f) => this.requestFsService.toPublicUrl(baseUrl, id, `${subdir}/${f}`));
+    };
+
+    const audioUrls = await resolveUrls('audio', audioFiles);
+    const transcriptUrls = await resolveUrls('transcript', transcriptFiles);
+    const subtitleUrls = await resolveUrls('subtitles', subtitleFiles);
+    const finalUrls = await resolveUrls('final', finalFiles);
+    const metaUrls = await resolveUrls('meta', metaFiles);
+    const segmentVideoUrls = await resolveUrls(
+      'segments',
+      segmentFiles.filter((f) => /^segment-\d+\.mp4$/i.test(f)),
+    );
+
+    const segmentArtifacts = await Promise.all(
+      request.segmentedScripts.map(async (text, idx) => {
+        const oneBased = idx + 1;
+        const imageCandidates = segmentFiles
+          .filter(
+            (f) => f.startsWith(`segment${oneBased}-image-`) && /\.(png|jpg|jpeg|webp)$/i.test(f),
+          )
+          .sort();
+        const videoCandidates = segmentFiles
+          .filter((f) => f.startsWith(`segment${oneBased}-video-`) && f.endsWith('.mp4'))
+          .sort();
+        const mergedCandidates = segmentFiles
+          .filter((f) => f.startsWith(`segment${oneBased}-merged-`) && f.endsWith('.mp4'))
+          .sort();
+        const finalSegment = `segment-${oneBased}.mp4`;
+
+        const timing = segmentTiming.find((t) => t.index === idx);
+        const plan = mediaPlan.find((m) => m.index === idx);
+
+        const imageUrls = useR2
+          ? await Promise.all(
+              imageCandidates.map((f) => this.r2Service.presignGetRequestUrl(id, `segments/${f}`)),
+            )
+          : imageCandidates.map((f) =>
+              this.requestFsService.toPublicUrl(baseUrl, id, `segments/${f}`),
+            );
+        const generatedChunkVideoUrls = useR2
+          ? await Promise.all(
+              videoCandidates.map((f) => this.r2Service.presignGetRequestUrl(id, `segments/${f}`)),
+            )
+          : videoCandidates.map((f) =>
+              this.requestFsService.toPublicUrl(baseUrl, id, `segments/${f}`),
+            );
+        const mergedVideoUrls = useR2
+          ? await Promise.all(
+              mergedCandidates.map((f) => this.r2Service.presignGetRequestUrl(id, `segments/${f}`)),
+            )
+          : mergedCandidates.map((f) =>
+              this.requestFsService.toPublicUrl(baseUrl, id, `segments/${f}`),
+            );
+        const finalSegmentUrlObj = segmentFiles.includes(finalSegment)
+          ? useR2
+            ? await this.r2Service.presignGetRequestUrl(id, `segments/${finalSegment}`)
+            : this.requestFsService.toPublicUrl(baseUrl, id, `segments/${finalSegment}`)
+          : null;
+
+        return {
+          index: idx,
+          text,
+          timing: timing || null,
+          mediaType: plan?.mediaType || null,
+          prompt: plan?.promptUsed || plan?.prompt || null,
+          imageModel: plan?.imageModel || null,
+          videoModel: plan?.videoModel || null,
+          imageUrls,
+          generatedChunkVideoUrls,
+          mergedVideoUrls,
+          finalSegmentUrl: finalSegmentUrlObj,
+        };
+      }),
+    );
 
     const hasAudio = audioFiles.length > 0;
     const hasTranscript = transcriptFiles.length > 0;
@@ -408,13 +696,17 @@ export class VideoRequestService {
       { key: 'transcript', label: 'Transcript generated', done: hasTranscript },
       { key: 'planning', label: 'Media plan generated', done: hasMediaPlan },
       { key: 'segments', label: 'Segment videos generated', done: hasSegments },
-      { key: 'final', label: 'Final video generated', done: hasFinal || request.status === 'completed' },
+      {
+        key: 'final',
+        label: 'Final video generated',
+        done: hasFinal || request.status === 'completed',
+      },
     ];
     const doneCount = progressStages.filter((s) => s.done).length;
     const percent = Math.round((doneCount / progressStages.length) * 100);
 
     return {
-      request: this.toResponse(request),
+      request: await this.toResponse(request),
       progress: {
         status: request.status,
         percent,
@@ -462,6 +754,14 @@ export class VideoRequestService {
     }
 
     await this.videoRequestRepository.delete({ id });
+
+    if (this.r2Service.isEnabled()) {
+      try {
+        await this.r2Service.deleteRequestDir(id);
+      } catch {
+        /* R2 cleanup best-effort */
+      }
+    }
 
     const requestDir = this.requestFsService.getRequestDir(id);
     try {
@@ -551,7 +851,7 @@ export class VideoRequestService {
       relations: ['user'],
       order: { createdAt: 'DESC' },
     });
-    return list.map((vr) => this.toResponse(vr));
+    return Promise.all(list.map((vr) => this.toResponse(vr)));
   }
 
   async approveYoutubeUpload(id: string, _adminUserId?: string) {
@@ -569,13 +869,17 @@ export class VideoRequestService {
       throw new BadRequestException('Request is missing resultUrl or connectionId');
     }
 
-    const videoId = await this.youTubeService.uploadVideoFromUrl(
+    const downloadableUrl = await this.resolveStorageUrl(
+      id,
       request.resultUrl,
+      request.storageBackend,
+    );
+
+    const videoId = await this.youTubeService.uploadVideoFromUrl(
+      downloadableUrl,
       {
         title:
-          request.youtubeTitle ||
-          request.fullScript.slice(0, 90) ||
-          `Video request ${request.id}`,
+          request.youtubeTitle || request.fullScript.slice(0, 90) || `Video request ${request.id}`,
         description: request.youtubeDescription || '',
         tags: request.youtubeTags || [],
         privacyStatus: request.youtubePrivacyStatus || 'private',

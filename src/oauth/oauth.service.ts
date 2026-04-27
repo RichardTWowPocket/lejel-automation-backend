@@ -107,7 +107,9 @@ export class OAuthService {
   }
 
   /** Resolve clientId and clientSecret for a credential (from Google client or legacy fields). */
-  private async getCredentialsForCredential(cred: OAuthCredential): Promise<{ clientId: string; clientSecret: string }> {
+  private async getCredentialsForCredential(
+    cred: OAuthCredential,
+  ): Promise<{ clientId: string; clientSecret: string }> {
     if (cred.googleClientId) {
       return this.googleClientService.getCredentials(cred.googleClientId);
     }
@@ -117,7 +119,9 @@ export class OAuthService {
         clientSecret: this.encryption.decrypt(cred.clientSecretEnc),
       };
     }
-    throw new BadRequestException('Connection has no credentials (missing Google client or legacy clientId/clientSecret)');
+    throw new BadRequestException(
+      'Connection has no credentials (missing Google client or legacy clientId/clientSecret)',
+    );
   }
 
   async getGoogleAuthUrl(
@@ -243,7 +247,9 @@ export class OAuthService {
   }
 
   /** Get first connected credential (for backward compat when no connectionId specified) */
-  async getFirstConnectedCredentialId(provider: OAuthProvider = 'google_youtube'): Promise<string | null> {
+  async getFirstConnectedCredentialId(
+    provider: OAuthProvider = 'google_youtube',
+  ): Promise<string | null> {
     const cred = await this.credRepo.findOne({
       where: { provider },
       order: { createdAt: 'DESC' },

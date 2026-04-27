@@ -16,12 +16,7 @@ import {
   ProfileSampleTexts,
   VideoProfile,
 } from '../video/types/profile-config.interface';
-import {
-  RATIOS,
-  RESOLUTIONS,
-  Ratio,
-  Resolution,
-} from './profile-dimensions';
+import { RATIOS, RESOLUTIONS, Ratio, Resolution } from './profile-dimensions';
 
 export function profileIdToFilename(profileId: string): string {
   return `${profileId}.json`;
@@ -55,10 +50,7 @@ export class ProfileService {
   }
 
   // DTOs are validated at runtime; this narrows them to the stricter profile type.
-  private toDimensionConfig(input: {
-    ratio: string;
-    resolution: string;
-  }): DimensionConfig {
+  private toDimensionConfig(input: { ratio: string; resolution: string }): DimensionConfig {
     if (!RATIOS.includes(input.ratio as Ratio)) {
       throw new BadRequestException(`Invalid ratio: ${input.ratio}`);
     }
@@ -174,9 +166,7 @@ export class ProfileService {
     this.ensureProfilesDir();
     const profilePath = this.resolveProfilePath(dto.profileId);
     if (fs.existsSync(profilePath)) {
-      throw new ConflictException(
-        `Profile already exists: ${dto.profileId}. Use PATCH to update.`,
-      );
+      throw new ConflictException(`Profile already exists: ${dto.profileId}. Use PATCH to update.`);
     }
 
     const doc: VideoProfile = {
@@ -190,19 +180,12 @@ export class ProfileService {
       sampleTexts: this.normalizeSampleTexts(dto.sampleTexts),
     };
 
-    await fs.promises.writeFile(
-      profilePath,
-      `${JSON.stringify(doc, null, 2)}\n`,
-      'utf-8',
-    );
+    await fs.promises.writeFile(profilePath, `${JSON.stringify(doc, null, 2)}\n`, 'utf-8');
     this.logger.log(`Created profile: ${dto.profileId}`);
     return doc;
   }
 
-  async updateProfile(
-    profileId: string,
-    dto: UpdateProfileDto,
-  ): Promise<VideoProfile> {
+  async updateProfile(profileId: string, dto: UpdateProfileDto): Promise<VideoProfile> {
     const existing = await this.getProfile(profileId);
 
     if (dto.name !== undefined) existing.name = dto.name;
@@ -238,20 +221,14 @@ export class ProfileService {
     }
 
     const profilePath = this.resolveProfilePath(profileId);
-    await fs.promises.writeFile(
-      profilePath,
-      `${JSON.stringify(existing, null, 2)}\n`,
-      'utf-8',
-    );
+    await fs.promises.writeFile(profilePath, `${JSON.stringify(existing, null, 2)}\n`, 'utf-8');
     this.logger.log(`Updated profile: ${profileId}`);
     return existing;
   }
 
   async deleteProfile(profileId: string): Promise<{ deleted: boolean; profileId: string }> {
     if (this.protectedFromDelete.has(profileId)) {
-      throw new ForbiddenException(
-        `Cannot delete built-in profile "${profileId}".`,
-      );
+      throw new ForbiddenException(`Cannot delete built-in profile "${profileId}".`);
     }
     const profilePath = this.resolveProfilePath(profileId);
     if (!fs.existsSync(profilePath)) {
