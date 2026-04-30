@@ -37,7 +37,6 @@ temp/
 *.tmp
 
 # Docker
-.dockerignore
 
 # Whisper cache (can be large)
 whisper-cache/
