@@ -9,8 +9,10 @@ import { AssemblyAIService } from '../assemblyai/assemblyai.service';
 import { ProfileService } from '../profile/profile.service';
 import { LlmService, SupportedLlmModel } from '../llm/llm.service';
 import { KieAiService, KieMarketImageModel } from '../kie-ai/kie-ai.service';
+import { KieTtsService } from '../kie-ai/kie-tts.service';
 import { RequestFsService } from './request-fs.service';
 import { R2Service } from '../media/r2.service';
+import { MotionGraphicPipelineService } from './motion-graphic-pipeline.service';
 import { TextStyleConfig, VideoProfile } from './types/profile-config.interface';
 import { resolveDimensions, Ratio, Resolution } from '../profile/profile-dimensions';
 import {
@@ -46,8 +48,10 @@ export class ScriptToVideoService {
     private readonly profileService: ProfileService,
     private readonly llmService: LlmService,
     private readonly kieAiService: KieAiService,
+    private readonly kieTtsService: KieTtsService,
     private readonly requestFsService: RequestFsService,
     private readonly r2Service: R2Service,
+    private readonly motionGraphicPipeline: MotionGraphicPipelineService,
   ) {}
 
   private async pipelineAbortIfNeeded(abortCheck?: () => Promise<boolean>): Promise<void> {
@@ -927,7 +931,17 @@ export class ScriptToVideoService {
     if (!audioPath) {
       const narrationText = this.resolveNarrationTextForTts(request);
       const voiceId = process.env.ELEVENLABS_VOICE_ID || '';
-      const generatedAudio = await this.elevenLabsService.generateSpeech(narrationText, voiceId);
+      let generatedAudio: string;
+      try {
+        generatedAudio = await this.elevenLabsService.generateSpeech(narrationText, voiceId);
+      } catch (err: any) {
+        this.logger.warn(
+          `ElevenLabs TTS failed (${err.message}); falling back to Kie.ai TTS`,
+        );
+        generatedAudio = await this.kieTtsService.generateSpeech(narrationText, {
+          voice: process.env.KIE_TTS_VOICE || 'Rachel',
+        });
+      }
       const audioFilename = `audio-${timestamp}.mp3`;
       audioPath = path.join(dirs.audio, audioFilename);
       await this.normalizeNarrationMp3(generatedAudio, audioPath);
@@ -1033,6 +1047,65 @@ export class ScriptToVideoService {
     );
 
     const contentType = request.contentType || 'mixed';
+
+    // ─── Motion Graphic Mode ─────────────────────────────────────────────────
+    if (contentType === 'motion_graphic') {
+      this.logger.log(`Motion graphic mode for request ${request.id}`);
+
+      const { resultUrl } = await this.motionGraphicPipeline.runPipeline(
+        request,
+        audioPath,
+        words,
+        masterTimelineEndSec,
+      );
+
+      // Write debug metadata
+      const debugMetaPath = path.join(dirs.meta, 'pipeline-output.json');
+      const debugMeta = {
+        requestId: request.id,
+        audio: path.relative(this.requestFsService.getRequestDir(request.id), audioPath),
+        finalVideo: 'final/final-video.mp4',
+        transcriptEndSec: totalDuration,
+        narrationFileDurationSec,
+        masterTimelineEndSec,
+        mode: 'motion_graphic',
+      };
+      this.requestFsService.writeJson(debugMetaPath, debugMeta);
+
+      if (this.r2Service.isEnabled()) {
+        try {
+          const localDir = this.requestFsService.getRequestDir(request.id);
+          await this.r2Service.uploadRequestDir(request.id, localDir);
+          const deleteLocalAfter = process.env.R2_REQUEST_DELETE_LOCAL_AFTER_UPLOAD;
+          if (deleteLocalAfter === 'true' || deleteLocalAfter === '1') {
+            try {
+              fs.rmSync(localDir, { recursive: true, force: true });
+            } catch {
+              // best-effort
+            }
+          }
+          return {
+            resultUrl: `r2:final/final-video.mp4`,
+            debugMetaUrl: `r2:meta/pipeline-output.json`,
+          };
+        } catch (err: unknown) {
+          this.logger.error(
+            `R2 upload failed for request ${request.id}, falling back to local: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      return {
+        resultUrl,
+        debugMetaUrl: this.requestFsService.toPublicUrl(
+          baseUrl,
+          request.id,
+          'meta/pipeline-output.json',
+        ),
+      };
+    }
+
+    // ─── Traditional Mode (image/video per segment) ──────────────────────────
     const mediaTypePerSegment: Array<'image' | 'video'> = [];
     if (contentType === 'all_image') {
       for (let i = 0; i < timings.length; i += 1) mediaTypePerSegment.push('image');

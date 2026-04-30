@@ -87,8 +87,8 @@ export class CreateVideoRequestDto {
   videoModel?: string;
 
   @IsOptional()
-  @IsIn(['all_image', 'all_video', 'mixed'])
-  contentType?: 'all_image' | 'all_video' | 'mixed';
+  @IsIn(['all_image', 'all_video', 'mixed', 'motion_graphic'])
+  contentType?: 'all_image' | 'all_video' | 'mixed' | 'motion_graphic';
 
   @IsOptional()
   @IsString()

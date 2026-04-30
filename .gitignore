@@ -53,6 +53,9 @@ public/media/
 public/requests/*
 !public/requests/.gitkeep
 
+# Motion graphic workspace (generated Remotion compositions)
+motion-workspace/
+
 
 
 

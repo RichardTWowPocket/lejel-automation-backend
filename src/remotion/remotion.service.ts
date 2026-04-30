@@ -15,6 +15,18 @@ import { R2Service } from '../media/r2.service';
 import { SaveTemplateDto } from './dto/save-template.dto';
 import { RenderTemplateDto } from './dto/render-template.dto';
 import { RemotionUserAssetDto } from './dto/remotion-user-asset.dto';
+import { BEST_PRACTICES_GUIDE, FEW_SHOT_EXAMPLES } from './remotion-best-practices';
+import { loadMegaSystemPrompt } from './mega-prompt.template';
+import {
+  CompositionPromptBuilder,
+  CompositionPromptInput,
+} from './composition-prompt.builder';
+import {
+  validateTsx,
+  hasCriticalErrors,
+  formatValidationErrors,
+  MAX_VALIDATION_RETRIES,
+} from './remotion-validator';
 
 export type RenderSourceOptions = {
   source: string;
@@ -59,7 +71,9 @@ LENGTH (critical — truncated TSX breaks the bundler with "Expected > but found
 
 Hard limits (truncated / unclosed JSX breaks the build): stay under ~220 lines; few divs + one small SVG or gradients; close every tag; end with a complete default export. No giant path arrays or copy-pasted shapes.
 
-Loop-friendly motion; skip fake headline copy unless the user asks for text.`;
+Loop-friendly motion; skip fake headline copy unless the user asks for text.
+
+${BEST_PRACTICES_GUIDE}`;
 
 const TSX_IMPORT_RULES_NO_ASSETS = `Imports: only from "remotion". No React import, no other packages, no URLs or files (no http(s) strings, no staticFile paths to user files).`;
 
@@ -83,6 +97,9 @@ function buildTsxSystemPrompt(opts: { userAssetKeysListed: boolean; revision: bo
   }
   parts.push(
     opts.userAssetKeysListed ? TSX_IMPORT_RULES_WITH_USER_ASSETS : TSX_IMPORT_RULES_NO_ASSETS,
+    '',
+    '--- REFERENCE TSX EXAMPLES (model your output after these) ---',
+    FEW_SHOT_EXAMPLES,
   );
   return parts.join('\n');
 }
@@ -152,7 +169,7 @@ export class RemotionService {
     const canvasBlock =
       canvas &&
       `\n--- OUTPUT CANVAS (match exactly) ---\nPixel composition: ${canvas.width} × ${canvas.height}.\nDesign for this aspect and resolution; use useVideoConfig() for width/height in layout.\n`;
-    const fullPrompt = [
+    const basePrompt = [
       buildTsxSystemPrompt({ userAssetKeysListed, revision: false }),
       '',
       '--- USER REQUEST ---',
@@ -161,15 +178,46 @@ export class RemotionService {
       options?.userAssetsMessageBlock ? `\n${options.userAssetsMessageBlock}\n` : '',
     ].join('\n');
 
-    const raw = await this.callLlmForTsx(model, fullPrompt);
+    let lastTsx = '';
+    for (let attempt = 0; attempt <= MAX_VALIDATION_RETRIES; attempt++) {
+      const raw = attempt === 0
+        ? await this.callLlmForTsxImpl(model, basePrompt)
+        : await this.callLlmForTsxImpl(model, basePrompt + '\n\n--- PREVIOUS ISSUES (fix these) ---\n' + lastTsx);
 
-    const tsx = this.extractTsx(raw);
-    if (!tsx) {
-      throw new InternalServerErrorException(
-        'LLM returned an empty or unparseable TSX response. Try rephrasing your prompt.',
-      );
+      const tsx = this.extractTsx(raw);
+      if (!tsx) {
+        if (attempt < MAX_VALIDATION_RETRIES) {
+          lastTsx = 'LLM returned empty or unparseable response. Output ONLY valid TSX code with export default.';
+          continue;
+        }
+        this.logger.warn(`generateTsx failed after ${MAX_VALIDATION_RETRIES + 1} attempts (empty TSX)`);
+        throw new InternalServerErrorException(
+          'LLM returned an empty or unparseable TSX response after multiple attempts. Try rephrasing.',
+        );
+      }
+
+      const fixed = this.ensureRemotionImports(tsx);
+      const errors = validateTsx(fixed);
+
+      if (!hasCriticalErrors(errors)) {
+        if (errors.length > 0) {
+          this.logger.warn(`generateTsx produced warnings: ${formatValidationErrors(errors)}`);
+        }
+        return fixed;
+      }
+
+      if (attempt < MAX_VALIDATION_RETRIES) {
+        lastTsx = formatValidationErrors(errors) + '\n\nFix ALL errors and output the complete corrected TSX.';
+        this.logger.warn(`generateTsx attempt ${attempt + 1} failed validation, retrying...`);
+      } else {
+        this.logger.warn(`generateTsx failed after ${MAX_VALIDATION_RETRIES + 1} attempts: ${formatValidationErrors(errors)}`);
+        throw new InternalServerErrorException(
+          `TSX validation failed after ${MAX_VALIDATION_RETRIES + 1} attempts: ${formatValidationErrors(errors)}`,
+        );
+      }
     }
-    return this.ensureRemotionImports(tsx);
+
+    throw new InternalServerErrorException('Unexpected error in generateTsx retry loop.');
   }
 
   async reviseTsx(
@@ -192,7 +240,7 @@ export class RemotionService {
     const canvasBlock =
       canvas &&
       `\n--- OUTPUT CANVAS (match exactly) ---\nPixel composition: ${canvas.width} × ${canvas.height}.\n`;
-    const fullPrompt = [
+    const basePrompt = [
       buildTsxSystemPrompt({ userAssetKeysListed: usesInputProps, revision: true }),
       '',
       '--- REVISION REQUEST ---',
@@ -203,20 +251,114 @@ export class RemotionService {
       trimmed,
     ].join('\n');
 
-    const raw = await this.callLlmForTsx(model, fullPrompt);
-    const tsx = this.extractTsx(raw);
-    if (!tsx) {
-      throw new InternalServerErrorException(
-        'LLM returned an empty or unparseable TSX revision. Try a shorter or clearer instruction.',
-      );
+    let lastTsx = '';
+    for (let attempt = 0; attempt <= MAX_VALIDATION_RETRIES; attempt++) {
+      const raw = attempt === 0
+        ? await this.callLlmForTsxImpl(model, basePrompt)
+        : await this.callLlmForTsxImpl(model, basePrompt + '\n\n--- PREVIOUS ISSUES (fix these) ---\n' + lastTsx);
+
+      const tsx = this.extractTsx(raw);
+      if (!tsx) {
+        if (attempt < MAX_VALIDATION_RETRIES) {
+          lastTsx = 'LLM returned empty or unparseable response. Output ONLY valid TSX code with export default.';
+          continue;
+        }
+        this.logger.warn(`reviseTsx failed after ${MAX_VALIDATION_RETRIES + 1} attempts (empty TSX)`);
+        throw new InternalServerErrorException(
+          'LLM returned an empty or unparseable TSX revision after multiple attempts.',
+        );
+      }
+
+      const fixed = this.ensureRemotionImports(tsx);
+      const errors = validateTsx(fixed);
+
+      if (!hasCriticalErrors(errors)) {
+        if (errors.length > 0) {
+          this.logger.warn(`reviseTsx produced warnings: ${formatValidationErrors(errors)}`);
+        }
+        return fixed;
+      }
+
+      if (attempt < MAX_VALIDATION_RETRIES) {
+        lastTsx = formatValidationErrors(errors) + '\n\nFix ALL errors and output the complete corrected TSX.';
+        this.logger.warn(`reviseTsx attempt ${attempt + 1} failed validation, retrying...`);
+      } else {
+        this.logger.warn(`reviseTsx failed after ${MAX_VALIDATION_RETRIES + 1} attempts: ${formatValidationErrors(errors)}`);
+        throw new InternalServerErrorException(
+          `TSX revision failed after ${MAX_VALIDATION_RETRIES + 1} attempts: ${formatValidationErrors(errors)}`,
+        );
+      }
     }
-    return this.ensureRemotionImports(tsx);
+
+    throw new InternalServerErrorException('Unexpected error in reviseTsx retry loop.');
+  }
+
+  // ─── Motion Graphic Composition Generation ─────────────────────────────────
+
+  /**
+   * Generate a full Remotion composition TSX for a scripted motion graphic video.
+   * Uses the mega prompt + composition prompt builder to produce a unified
+   * Composition.tsx with scenes, captions, and audio synced to Whisper timings.
+   */
+  async generateComposition(
+    input: CompositionPromptInput,
+    model: SupportedLlmModel = 'claude-sonnet-4-6',
+  ): Promise<string> {
+    const userPrompt = CompositionPromptBuilder.build(input);
+
+    const fullPrompt = [
+      loadMegaSystemPrompt(),
+      '',
+      '--- USER REQUEST ---',
+      userPrompt,
+    ].join('\n');
+
+    let lastTsx = '';
+    for (let attempt = 0; attempt <= MAX_VALIDATION_RETRIES; attempt++) {
+      const raw = attempt === 0
+        ? await this.callLlmForTsxImpl(model, fullPrompt)
+        : await this.callLlmForTsxImpl(model, fullPrompt + '\n\n--- PREVIOUS ISSUES (fix these) ---\n' + lastTsx);
+
+      const tsx = this.extractTsx(raw);
+      if (!tsx) {
+        if (attempt < MAX_VALIDATION_RETRIES) {
+          lastTsx = 'LLM returned empty or unparseable response. Output ONLY valid TSX code with export default.';
+          continue;
+        }
+        this.logger.warn(`generateComposition failed after ${MAX_VALIDATION_RETRIES + 1} attempts (empty TSX)`);
+        throw new InternalServerErrorException(
+          'LLM returned an empty or unparseable TSX response after multiple attempts. Try rephrasing.',
+        );
+      }
+
+      const fixed = this.ensureRemotionImports(tsx);
+      const errors = validateTsx(fixed);
+
+      if (!hasCriticalErrors(errors)) {
+        if (errors.length > 0) {
+          this.logger.warn(`generateComposition produced warnings: ${formatValidationErrors(errors)}`);
+        }
+        return fixed;
+      }
+
+      if (attempt < MAX_VALIDATION_RETRIES) {
+        lastTsx = formatValidationErrors(errors) + '\n\nFix ALL errors and output the complete corrected TSX.';
+        this.logger.warn(`generateComposition attempt ${attempt + 1} failed validation, retrying...`);
+      } else {
+        this.logger.warn(`generateComposition failed after ${MAX_VALIDATION_RETRIES + 1} attempts: ${formatValidationErrors(errors)}`);
+        throw new InternalServerErrorException(
+          `Composition TSX validation failed after ${MAX_VALIDATION_RETRIES + 1} attempts: ${formatValidationErrors(errors)}`,
+        );
+      }
+    }
+
+    throw new InternalServerErrorException('Unexpected error in generateComposition retry loop.');
   }
 
   /**
-   * LLMs often omit imports; without them esbuild fails (undefined hooks/components).
-   * If the file has no `from "remotion"` import, prepend a standard one.
-   */
+    * LLMs often omit imports; without them esbuild fails (undefined hooks/components).
+    * If the file has no `from "remotion"` import, prepend a standard one.
+    */
   private ensureRemotionImports(tsx: string): string {
     const t = tsx.trimStart();
     if (/from\s+['"]remotion['"]/.test(t)) {
@@ -248,7 +390,18 @@ export class RemotionService {
    * Calls Kie.ai with the given model and prompt, returning raw text output.
    * We re-implement the HTTP call here rather than depending on private LlmService methods.
    */
-  private async callLlmForTsx(model: SupportedLlmModel, prompt: string): Promise<string> {
+  async callLlmForTsx(model: SupportedLlmModel, prompt: string): Promise<string> {
+    return this.callLlmForTsxImpl(model, prompt);
+  }
+
+  /**
+   * Public alias for the agent service to call the LLM with arbitrary prompts.
+   */
+  async callLlmForAgent(model: SupportedLlmModel, prompt: string): Promise<string> {
+    return this.callLlmForTsxImpl(model, prompt);
+  }
+
+  private async callLlmForTsxImpl(model: SupportedLlmModel, prompt: string): Promise<string> {
     const apiKey = this.configService.get<string>('KIE_AI_API_KEY', '');
     if (!apiKey) {
       throw new InternalServerErrorException('KIE_AI_API_KEY is not configured.');
@@ -322,11 +475,40 @@ export class RemotionService {
       return this.extractTextFromKieResponse(res.data, model);
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
-        const msg = JSON.stringify(err.response?.data ?? err.message).slice(0, 600);
-        throw new InternalServerErrorException(`Kie.ai LLM error (${model}): ${msg}`);
+        const rawMsg = JSON.stringify(err.response?.data ?? err.message).slice(0, 600);
+        const clean = this.cleanLlmError(rawMsg, model);
+        throw new InternalServerErrorException(clean);
       }
       throw err;
     }
+  }
+
+  private cleanLlmError(raw: string, model: string): string {
+    const modelName = model;
+
+    if (/maintenance/i.test(raw) || /under maintenance/i.test(raw)) {
+      return `The AI model "${modelName}" is currently down for maintenance on Kie.ai. Please try again later or switch to a different model (e.g. gpt-5-4 or gemini-3-flash) in the settings.`;
+    }
+
+    if (/rate limit|too many requests|429/i.test(raw)) {
+      return `Rate limit hit for model "${modelName}". Wait a moment and try again, or switch to a less busy model.`;
+    }
+
+    if (/timeout|timed out|ETIMEDOUT/i.test(raw)) {
+      return `The request to model "${modelName}" timed out. The server may be overloaded. Try again or pick a different model.`;
+    }
+
+    if (/insufficient_quota|quota|credit/i.test(raw)) {
+      return `Your Kie.ai account may be out of credits for model "${modelName}". Check your credit balance and try a different model.`;
+    }
+
+    if (/unauthorized|403|invalid.*api/i.test(raw)) {
+      return `Kie.ai authentication failed for model "${modelName}". The API key may be invalid or expired.`;
+    }
+
+    // Generic fallback
+    const truncated = raw.replace(/[{}"]/g, '').slice(0, 300);
+    return `The AI model "${modelName}" returned an error: ${truncated}. Try again or switch to a different model.`;
   }
 
   private extractTextFromKieResponse(data: unknown, model: string): string {

@@ -30,6 +30,7 @@ services:
       - ./public/media:/app/public/media
       - ./public/fonts/custom:/app/public/fonts/custom
       - ./profiles:/app/profiles
+      - ./motion-workspace:/app/motion-workspace
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - lejel-network
