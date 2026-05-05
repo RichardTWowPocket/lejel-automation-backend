@@ -95,7 +95,7 @@ Implement a global caption overlay:
 
 The output MUST follow this exact structure:
 
-1. Import from remotion: AbsoluteFill, Audio, Sequence, staticFile, interpolate, spring, useCurrentFrame, useVideoConfig, Easing
+1. Import from remotion: AbsoluteFill, Audio, Sequence, staticFile, interpolate, spring, useCurrentFrame, useVideoConfig, Easing, getInputProps
 2. const fontStack = "'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif";
 3. WHISPER_WORDS array with the exact word timings provided
 4. SEGMENTS array with frame data
@@ -105,6 +105,18 @@ The output MUST follow this exact structure:
 8. SegmentMotion wrapper with enter/exit spring animation
 9. WhisperSocialCaptions component with word-by-word karaoke highlighting
 10. export default function Composition() with AbsoluteFill root, Audio, Sequence map, and captions overlay
+
+## AUDIO
+
+The narration audio URL is provided via Remotion input props. In the default export function, read it with:
+```
+const { audioUrl } = getInputProps() as { audioUrl?: string };
+```
+Then render the audio track:
+```
+<Audio src={audioUrl} />
+```
+NEVER use staticFile() for audio. NEVER hardcode any http(s) URL for audio.
 
 ## STYLE GUIDELINES
 
