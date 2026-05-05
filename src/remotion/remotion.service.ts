@@ -186,6 +186,10 @@ export class RemotionService {
 
       const tsx = this.extractTsx(raw);
       if (!tsx) {
+        this.logger.warn(
+          `[RemotionService] generateTsx attempt ${attempt + 1}: extractTsx returned empty. ` +
+          `Raw text length=${raw.length}, preview=${raw.slice(0, 200).replace(/\n/g, '\\n')}`,
+        );
         if (attempt < MAX_VALIDATION_RETRIES) {
           lastTsx = 'LLM returned empty or unparseable response. Output ONLY valid TSX code with export default.';
           continue;
@@ -321,6 +325,10 @@ export class RemotionService {
 
       const tsx = this.extractTsx(raw);
       if (!tsx) {
+        this.logger.warn(
+          `[RemotionService] generateComposition attempt ${attempt + 1}: extractTsx returned empty. ` +
+          `Raw text length=${raw.length}, preview=${raw.slice(0, 200).replace(/\n/g, '\\n')}`,
+        );
         if (attempt < MAX_VALIDATION_RETRIES) {
           lastTsx = 'LLM returned empty or unparseable response. Output ONLY valid TSX code with export default.';
           continue;
@@ -471,10 +479,18 @@ export class RemotionService {
           model,
           messages: [{ role: 'user', content: prompt }],
           stream: false,
+          max_tokens: 8192,
         },
         { headers, timeout: 300000 },
       );
-      return this.extractTextFromKieResponse(res.data, model);
+      const extracted = this.extractTextFromKieResponse(res.data, model);
+      if (!extracted) {
+        this.logger.warn(
+          `[RemotionService] extractTextFromKieResponse returned empty for model=${model}. ` +
+          `Raw response keys: ${Object.keys(res.data || {}).join(', ')}`,
+        );
+      }
+      return extracted;
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
         const rawMsg = JSON.stringify(err.response?.data ?? err.message).slice(0, 600);
