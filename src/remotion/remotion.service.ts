@@ -423,7 +423,7 @@ export class RemotionService {
             max_tokens: 16384,
             messages: [{ role: 'user', content: prompt }],
           },
-          { headers, timeout: 120000 },
+          { headers, timeout: 300000 },
         );
         return this.extractTextFromKieResponse(res.data, model);
       }
@@ -437,7 +437,7 @@ export class RemotionService {
             reasoning: { effort: 'low' },
             input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }] }],
           },
-          { headers, timeout: 120000 },
+          { headers, timeout: 300000 },
         );
         return this.extractTextFromKieResponse(res.data, model);
       }
@@ -450,7 +450,7 @@ export class RemotionService {
             messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
             reasoning_effort: 'high',
           },
-          { headers, timeout: 120000 },
+          { headers, timeout: 300000 },
         );
         return this.extractTextFromKieResponse(res.data, model);
       }
@@ -472,7 +472,7 @@ export class RemotionService {
           messages: [{ role: 'user', content: prompt }],
           stream: false,
         },
-        { headers, timeout: 120000 },
+        { headers, timeout: 300000 },
       );
       return this.extractTextFromKieResponse(res.data, model);
     } catch (err: unknown) {

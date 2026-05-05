@@ -303,7 +303,7 @@ export class LlmService {
             },
           ],
         },
-        { headers, timeout: 90000 },
+        { headers, timeout: 300000 },
       );
       data = res.data;
     } else if (model === 'gpt-5-2') {
@@ -318,7 +318,7 @@ export class LlmService {
           ],
           reasoning_effort: 'high',
         },
-        { headers, timeout: 90000 },
+        { headers, timeout: 300000 },
       );
       data = res.data;
     } else if (model === 'claude-sonnet-4-6') {
@@ -329,7 +329,7 @@ export class LlmService {
           stream: false,
           messages: [{ role: 'user', content: prompt }],
         },
-        { headers, timeout: 90000 },
+        { headers, timeout: 300000 },
       );
       data = res.data;
     } else if (
@@ -348,7 +348,7 @@ export class LlmService {
             },
           ],
         },
-        { headers, timeout: 90000 },
+        { headers, timeout: 300000 },
       );
       data = res.data;
     } else {
@@ -365,7 +365,7 @@ export class LlmService {
             },
           ],
         },
-        { headers, timeout: 90000 },
+        { headers, timeout: 300000 },
       );
       data = res.data;
     }
