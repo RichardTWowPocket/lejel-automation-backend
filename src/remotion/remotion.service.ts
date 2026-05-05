@@ -428,7 +428,6 @@ export class RemotionService {
           {
             model: 'claude-sonnet-4-6',
             stream: false,
-            max_tokens: 16384,
             messages: [{ role: 'user', content: prompt }],
           },
           { headers, timeout: 300000 },
@@ -479,7 +478,6 @@ export class RemotionService {
           model,
           messages: [{ role: 'user', content: prompt }],
           stream: false,
-          max_tokens: 8192,
         },
         { headers, timeout: 300000 },
       );
