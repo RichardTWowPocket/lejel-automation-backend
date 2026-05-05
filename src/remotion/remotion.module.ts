@@ -7,11 +7,12 @@ import { RemotionService } from './remotion.service';
 import { RemotionController } from './remotion.controller';
 import { RemotionAgentService } from './remotion-agent.service';
 import { RemotionAgentController } from './remotion-agent.controller';
+import { CompositionAssembler } from './composition-assembler.service';
 
 @Module({
   imports: [ConfigModule, AuthModule, TypeOrmModule.forFeature([RemotionTemplate])],
   controllers: [RemotionController, RemotionAgentController],
-  providers: [RemotionService, RemotionAgentService],
-  exports: [RemotionService, RemotionAgentService],
+  providers: [RemotionService, RemotionAgentService, CompositionAssembler],
+  exports: [RemotionService, RemotionAgentService, CompositionAssembler],
 })
 export class RemotionModule {}

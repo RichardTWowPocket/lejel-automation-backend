@@ -4,6 +4,7 @@ import * as path from 'path';
 import { ConfigService } from '@nestjs/config';
 import { VideoRequest } from '../entities/video-request.entity';
 import { RemotionService } from '../remotion/remotion.service';
+import { CompositionAssembler } from '../remotion/composition-assembler.service';
 import {
   CompositionPromptBuilder,
   CompositionPromptInput,
@@ -19,6 +20,7 @@ export class MotionGraphicPipelineService {
   constructor(
     private readonly configService: ConfigService,
     private readonly remotionService: RemotionService,
+    private readonly compositionAssembler: CompositionAssembler,
     private readonly requestFsService: RequestFsService,
     private readonly r2Service: R2Service,
   ) {}
@@ -86,9 +88,10 @@ export class MotionGraphicPipelineService {
 
     this.logger.log(`Generating motion graphic composition for request ${requestId} with ${segments.length} scenes`);
 
-    // Generate TSX
+    // Generate TSX via template-based assembler
     const model = (request.llmModel as any) || 'claude-sonnet-4-6';
-    const tsxSource = await this.remotionService.generateComposition(promptInput, model);
+    const assembled = await this.compositionAssembler.assemble(promptInput, model);
+    const tsxSource = assembled.tsxSource;
 
     // Write TSX to disk for debugging
     const metaDir = path.join(this.requestFsService.getRequestDir(requestId), 'meta');
