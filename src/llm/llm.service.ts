@@ -352,22 +352,18 @@ export class LlmService {
       );
       data = res.data;
     } else {
+      // gemini-3-flash fallback via OpenAI-compatible endpoint
       const res = await axios.post(
-        `${this.baseUrl}/gemini/v1/models/gemini-3-flash-v1betamodels:streamGenerateContent`,
+        `${this.baseUrl}/gemini-3-flash/v1/chat/completions`,
         {
+          model: 'gemini-3-flash',
           stream: false,
-          contents: [
+          messages: [
             {
               role: 'user',
-              parts: [{ text: prompt }],
+              content: [{ type: 'text', text: prompt }],
             },
           ],
-          generationConfig: {
-            thinkingConfig: {
-              includeThoughts: false,
-              thinkingLevel: 'low',
-            },
-          },
         },
         { headers, timeout: 90000 },
       );

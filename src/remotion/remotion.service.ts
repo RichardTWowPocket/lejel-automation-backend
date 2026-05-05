@@ -442,21 +442,10 @@ export class RemotionService {
         return this.extractTextFromKieResponse(res.data, model);
       }
 
-      // Gemini and GPT-5-2 variants
-      const modelEndpoints: Record<string, string> = {
-        'gpt-5-2': `${baseUrl}/gpt-5-2/v1/chat/completions`,
-        'gemini-3-flash': `${baseUrl}/gemini/v1beta/models/gemini-3-flash:generateContent`,
-        'gemini-3-pro': `${baseUrl}/gemini/v1beta/models/gemini-3-pro:generateContent`,
-        'gemini-3.1-pro': `${baseUrl}/gemini/v1beta/models/gemini-3.1-pro:generateContent`,
-        'gemini-2.5-flash': `${baseUrl}/gemini/v1beta/models/gemini-2.5-flash:generateContent`,
-      };
-
-      const endpoint = modelEndpoints[model];
-      if (!endpoint) throw new BadRequestException(`Unsupported model: ${model}`);
-
+      // GPT-5-2 via OpenAI-compatible endpoint
       if (model === 'gpt-5-2') {
         const res = await axios.post(
-          endpoint,
+          `${baseUrl}/gpt-5-2/v1/chat/completions`,
           {
             messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
             reasoning_effort: 'high',
@@ -466,10 +455,23 @@ export class RemotionService {
         return this.extractTextFromKieResponse(res.data, model);
       }
 
-      // Gemini variants
+      // Gemini variants via OpenAI-compatible endpoint
+      const geminiModels = [
+        'gemini-3-flash',
+        'gemini-3-pro',
+        'gemini-3.1-pro',
+        'gemini-2.5-flash',
+      ];
+      if (!geminiModels.includes(model)) {
+        throw new BadRequestException(`Unsupported model: ${model}`);
+      }
       const res = await axios.post(
-        endpoint,
-        { contents: [{ parts: [{ text: prompt }] }] },
+        `${baseUrl}/${model}/v1/chat/completions`,
+        {
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          stream: false,
+        },
         { headers, timeout: 120000 },
       );
       return this.extractTextFromKieResponse(res.data, model);
