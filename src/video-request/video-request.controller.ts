@@ -17,6 +17,7 @@ import { User as ReqUser } from '../auth/user.decorator';
 import { CreateVideoRequestDto } from './dto/create-video-request.dto';
 import { UpdateVideoRequestDto } from './dto/update-video-request.dto';
 import { CallbackDto } from './dto/callback.dto';
+import { RetryWithChangesDto } from './dto/retry-with-changes.dto';
 import { VideoRequestStatus } from '../entities/video-request.entity';
 
 @Controller('api/video-requests')
@@ -104,6 +105,18 @@ export class VideoRequestController {
   @UseGuards(JwtAuthGuard)
   async retry(@ReqUser() user: { id: string; role?: 'user' | 'admin' }, @Param('id') id: string) {
     return this.videoRequestService.retryFailed(id, user.id, {
+      isAdmin: user.role === 'admin',
+    });
+  }
+
+  @Post(':id/retry-with-changes')
+  @UseGuards(JwtAuthGuard)
+  async retryWithChanges(
+    @ReqUser() user: { id: string; role?: 'user' | 'admin' },
+    @Param('id') id: string,
+    @Body() dto: RetryWithChangesDto,
+  ) {
+    return this.videoRequestService.retryWithChanges(id, user.id, dto, {
       isAdmin: user.role === 'admin',
     });
   }

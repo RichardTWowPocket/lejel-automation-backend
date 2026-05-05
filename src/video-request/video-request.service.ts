@@ -24,6 +24,7 @@ import {
 import { YouTubeService } from '../oauth/youtube.service';
 import { CreateVideoRequestDto } from './dto/create-video-request.dto';
 import { UpdateVideoRequestDto } from './dto/update-video-request.dto';
+import { RetryWithChangesDto } from './dto/retry-with-changes.dto';
 import { VIDEO_GENERATION_JOB, VIDEO_GENERATION_QUEUE } from './video-request.queue';
 import { RequestFsService } from '../video/request-fs.service';
 import { R2Service } from '../media/r2.service';
@@ -372,6 +373,48 @@ export class VideoRequestService {
       completedAt: null,
     });
 
+    await this.enqueueGenerationJob(id, { resume: true });
+
+    const updated = await this.getEntityById(id);
+    return this.toResponse(updated);
+  }
+
+  /**
+   * Retry a failed request with updated parameters (e.g. switch model).
+   * Updates the request fields, clears error state, and re-queues with resume=true.
+   */
+  async retryWithChanges(
+    id: string,
+    userId: string,
+    dto: RetryWithChangesDto,
+    options?: { isAdmin?: boolean },
+  ) {
+    const request = await this.videoRequestRepository.findOne({
+      where: { id },
+      relations: ['user'],
+    });
+    if (!request) {
+      throw new NotFoundException('Video request not found');
+    }
+    const isAdmin = options?.isAdmin === true;
+    if (!isAdmin && request.userId !== userId) {
+      throw new ForbiddenException('Not allowed to access this request');
+    }
+    if (request.status !== 'failed') {
+      throw new BadRequestException('Only failed requests can be retried');
+    }
+
+    const update: Partial<VideoRequest> = {
+      status: 'pending',
+      errorMessage: null,
+      completedAt: null,
+    };
+    if (dto.llmModel !== undefined) update.llmModel = dto.llmModel;
+    if (dto.imageModel !== undefined) update.imageModel = dto.imageModel;
+    if (dto.videoModel !== undefined) update.videoModel = dto.videoModel;
+    if (dto.contentType !== undefined) update.contentType = dto.contentType;
+
+    await this.videoRequestRepository.update(id, update);
     await this.enqueueGenerationJob(id, { resume: true });
 
     const updated = await this.getEntityById(id);
