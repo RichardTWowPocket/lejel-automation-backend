@@ -82,6 +82,15 @@ export class VideoRequest {
   @Column({ type: 'varchar', length: 64, nullable: true })
   videoModel: string | null;
 
+  /** Motion graphic pipeline config (canvas, fps, visual style prompt) */
+  @Column('simple-json', { nullable: true })
+  motionConfig: {
+    width: number;
+    height: number;
+    fps: number;
+    visualStylePrompt?: string;
+  } | null;
+
   @Column({ type: 'varchar', length: 64, nullable: true })
   llmModel: string | null;
 

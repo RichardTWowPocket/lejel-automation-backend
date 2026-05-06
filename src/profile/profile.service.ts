@@ -15,6 +15,8 @@ import {
   DimensionConfig,
   ProfileSampleTexts,
   VideoProfile,
+  VideoGenerationConfig,
+  YoutubeProfileConfig,
 } from '../video/types/profile-config.interface';
 import { RATIOS, RESOLUTIONS, Ratio, Resolution } from './profile-dimensions';
 
@@ -97,6 +99,44 @@ export class ProfileService {
     return Object.keys(out).length ? out : undefined;
   }
 
+  private normalizeGenerationConfig(
+    raw?: { contentType: string; llmModel: string; imageModel?: string; videoModel?: string } | null,
+  ): VideoGenerationConfig | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const c = raw as Record<string, unknown>;
+    if (typeof c.contentType !== 'string' || typeof c.llmModel !== 'string') return undefined;
+    if (!['slideshow', 'motion_graphic'].includes(c.contentType)) return undefined;
+    return {
+      contentType: c.contentType as 'slideshow' | 'motion_graphic',
+      llmModel: String(c.llmModel),
+      ...(typeof c.imageModel === 'string' && c.imageModel.trim()
+        ? { imageModel: c.imageModel.trim() }
+        : {}),
+      ...(typeof c.videoModel === 'string' && c.videoModel.trim()
+        ? { videoModel: c.videoModel.trim() }
+        : {}),
+    };
+  }
+
+  private normalizeYoutubeConfig(
+    raw?: { uploadMode: string; connectionId?: string; privacyStatus?: string } | null,
+  ): YoutubeProfileConfig | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const c = raw as Record<string, unknown>;
+    if (typeof c.uploadMode !== 'string') return undefined;
+    if (!['none', 'direct', 'pending_approval'].includes(c.uploadMode)) return undefined;
+    return {
+      uploadMode: c.uploadMode as 'none' | 'direct' | 'pending_approval',
+      ...(typeof c.connectionId === 'string' && c.connectionId.trim()
+        ? { connectionId: c.connectionId.trim() }
+        : {}),
+      ...(typeof c.privacyStatus === 'string' &&
+        ['public', 'private', 'unlisted'].includes(c.privacyStatus)
+        ? { privacyStatus: c.privacyStatus as 'public' | 'private' | 'unlisted' }
+        : {}),
+    };
+  }
+
   private normalizeProfile(profile: VideoProfile): VideoProfile {
     const n = (v: unknown) => Number(v) || 0;
     return {
@@ -124,6 +164,8 @@ export class ProfileService {
         },
       },
       sampleTexts: this.normalizeSampleTexts(profile.sampleTexts),
+      generation: this.normalizeGenerationConfig(profile.generation as any),
+      youtube: this.normalizeYoutubeConfig(profile.youtube as any),
     };
   }
 
@@ -178,6 +220,17 @@ export class ProfileService {
       subtitle: dto.subtitle,
       headline: dto.headline,
       sampleTexts: this.normalizeSampleTexts(dto.sampleTexts),
+      generation: dto.generation ? {
+        contentType: dto.generation.contentType,
+        llmModel: dto.generation.llmModel,
+        ...(dto.generation.imageModel ? { imageModel: dto.generation.imageModel } : {}),
+        ...(dto.generation.videoModel ? { videoModel: dto.generation.videoModel } : {}),
+      } : undefined,
+      youtube: dto.youtube ? {
+        uploadMode: dto.youtube.uploadMode,
+        ...(dto.youtube.connectionId ? { connectionId: dto.youtube.connectionId } : {}),
+        ...(dto.youtube.privacyStatus ? { privacyStatus: dto.youtube.privacyStatus } : {}),
+      } : undefined,
     };
 
     await fs.promises.writeFile(profilePath, `${JSON.stringify(doc, null, 2)}\n`, 'utf-8');
@@ -218,6 +271,39 @@ export class ProfileService {
     }
     if (dto.sampleTexts !== undefined) {
       existing.sampleTexts = this.normalizeSampleTexts(dto.sampleTexts);
+    }
+    if (dto.generation !== undefined) {
+      if (dto.generation === null) {
+        existing.generation = undefined;
+      } else {
+        const gen = dto.generation as any;
+        existing.generation = {
+          contentType: gen.contentType ?? existing.generation?.contentType,
+          llmModel: gen.llmModel ?? existing.generation?.llmModel,
+          ...(gen.imageModel !== undefined
+            ? { imageModel: gen.imageModel || undefined }
+            : { imageModel: existing.generation?.imageModel }),
+          ...(gen.videoModel !== undefined
+            ? { videoModel: gen.videoModel || undefined }
+            : { videoModel: existing.generation?.videoModel }),
+        } as VideoGenerationConfig;
+      }
+    }
+    if (dto.youtube !== undefined) {
+      if (dto.youtube === null) {
+        existing.youtube = undefined;
+      } else {
+        const yt = dto.youtube as any;
+        existing.youtube = {
+          uploadMode: yt.uploadMode ?? existing.youtube?.uploadMode,
+          ...(yt.connectionId !== undefined
+            ? { connectionId: yt.connectionId || undefined }
+            : { connectionId: existing.youtube?.connectionId }),
+          ...(yt.privacyStatus !== undefined
+            ? { privacyStatus: yt.privacyStatus || undefined }
+            : { privacyStatus: existing.youtube?.privacyStatus }),
+        } as YoutubeProfileConfig;
+      }
     }
 
     const profilePath = this.resolveProfilePath(profileId);

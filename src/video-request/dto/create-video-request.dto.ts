@@ -1,6 +1,25 @@
 import { Type } from 'class-transformer';
-import { IsString, IsArray, ArrayMinSize, IsOptional, IsIn, ValidateNested } from 'class-validator';
+import { IsString, IsArray, ArrayMinSize, IsOptional, IsIn, ValidateNested, IsNumber, IsInt, Min, Max } from 'class-validator';
 import { UserSegmentMediaItemDto } from './user-segment-media-item.dto';
+
+export class MotionConfigDto {
+  @IsInt()
+  @Min(1)
+  width: number;
+
+  @IsInt()
+  @Min(1)
+  height: number;
+
+  @IsInt()
+  @Min(1)
+  @Max(120)
+  fps: number;
+
+  @IsOptional()
+  @IsString()
+  visualStylePrompt?: string;
+}
 
 export class CreateVideoRequestDto {
   @IsString()
@@ -103,6 +122,12 @@ export class CreateVideoRequestDto {
   @IsOptional()
   @IsString()
   bottomHeadlineText?: string;
+
+  /** Motion graphic config: canvas size, fps, and optional visual style prompt */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => MotionConfigDto)
+  motionConfig?: MotionConfigDto;
 
   /** R2-backed user media mapped to segment indices (Generate video). */
   @IsOptional()

@@ -12,7 +12,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ProfileSampleTextsDto } from './create-profile.dto';
+import { ProfileSampleTextsDto, VideoGenerationConfigDto, YoutubeProfileConfigDto } from './create-profile.dto';
 
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 const RATIOS = ['1:1', '3:4', '4:3', '9:16', '16:9'];
@@ -163,4 +163,14 @@ export class UpdateProfileDto {
   @ValidateNested()
   @Type(() => ProfileSampleTextsDto)
   sampleTexts?: ProfileSampleTextsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => VideoGenerationConfigDto)
+  generation?: VideoGenerationConfigDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => YoutubeProfileConfigDto)
+  youtube?: YoutubeProfileConfigDto;
 }

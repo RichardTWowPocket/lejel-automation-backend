@@ -42,6 +42,19 @@ export interface ProfileSampleTexts {
   subtitle?: string;
 }
 
+export interface VideoGenerationConfig {
+  contentType: 'slideshow' | 'motion_graphic';
+  llmModel: string;
+  imageModel?: string;
+  videoModel?: string;
+}
+
+export interface YoutubeProfileConfig {
+  uploadMode: 'none' | 'direct' | 'pending_approval';
+  connectionId?: string;
+  privacyStatus?: 'public' | 'private' | 'unlisted';
+}
+
 export interface VideoProfile {
   profileId: string;
   name: string;
@@ -51,4 +64,6 @@ export interface VideoProfile {
   subtitle: SubtitleConfig;
   headline: HeadlineConfig;
   sampleTexts?: ProfileSampleTexts;
+  generation?: VideoGenerationConfig;
+  youtube?: YoutubeProfileConfig;
 }

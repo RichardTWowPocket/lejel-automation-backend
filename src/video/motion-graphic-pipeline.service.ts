@@ -42,12 +42,18 @@ export class MotionGraphicPipelineService {
     totalDurationSec: number,
   ): Promise<{ resultUrl: string; tsxSource: string }> {
     const requestId = request.id;
-    const fps = 30;
-    const profileId = request.profileId || 'default_longform';
 
-    // Resolve canvas dimensions from profile
-    const canvasWidth = 1080;
-    const canvasHeight = 1920;
+    // Use motionConfig from request, fall back to profile or hardcoded defaults
+    const fps = request.motionConfig?.fps || 30;
+    const canvasWidth = request.motionConfig?.width || 1080;
+    const canvasHeight = request.motionConfig?.height || 1920;
+    const visualStylePrompt = request.motionConfig?.visualStylePrompt || undefined;
+
+    this.logger.log(
+      `Motion graphic pipeline: ${canvasWidth}x${canvasHeight} @ ${fps}fps${visualStylePrompt ? `, style: ${visualStylePrompt}` : ''}`,
+    );
+
+    const profileId = request.profileId || 'default_longform';
 
     // Build audio public URL
     const baseUrl = this.configService.get<string>('BASE_URL', 'http://localhost:3000');
@@ -69,7 +75,12 @@ export class MotionGraphicPipelineService {
       startFrame: seg.startFrame,
       durationInFrames: seg.durationInFrames,
       voiceEndFrame: seg.voiceEndFrame,
-      visualDirection: CompositionPromptBuilder.generateVisualDirection(seg.script),
+      visualDirection: [
+        CompositionPromptBuilder.generateVisualDirection(seg.script),
+        visualStylePrompt ? `[Style guide: ${visualStylePrompt}]` : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
       keyNumbers: CompositionPromptBuilder.extractKeyNumbers(seg.script),
     }));
 

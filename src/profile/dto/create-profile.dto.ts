@@ -127,6 +127,58 @@ export class ProfileSampleTextsDto {
   subtitle?: string;
 }
 
+export class VideoGenerationConfigDto {
+  @IsIn(['slideshow', 'motion_graphic'])
+  contentType: 'slideshow' | 'motion_graphic';
+
+  @IsIn([
+    'gpt-5-4',
+    'gpt-5-2',
+    'claude-sonnet-4-6',
+    'gemini-3-flash',
+    'gemini-3-pro',
+    'gemini-3.1-pro',
+    'gemini-2.5-flash',
+  ])
+  llmModel: string;
+
+  @IsOptional()
+  @IsIn([
+    'z-image',
+    'nano-banana-pro',
+    'google/nano-banana',
+    'flux-2/pro-text-to-image',
+    'flux-2/flex-text-to-image',
+    'grok-imagine/text-to-image',
+    'gpt-image/1.5-text-to-image',
+  ])
+  imageModel?: string;
+
+  @IsOptional()
+  @IsIn([
+    'kling-v1.6',
+    'kling-v2.1-master',
+    'kling-v2.1',
+    'bytedance/v1-lite-text-to-video',
+    'wan/2-6-text-to-video',
+    'grok-imagine/image-to-video',
+  ])
+  videoModel?: string;
+}
+
+export class YoutubeProfileConfigDto {
+  @IsIn(['none', 'direct', 'pending_approval'])
+  uploadMode: 'none' | 'direct' | 'pending_approval';
+
+  @IsOptional()
+  @IsString()
+  connectionId?: string;
+
+  @IsOptional()
+  @IsIn(['public', 'private', 'unlisted'])
+  privacyStatus?: 'public' | 'private' | 'unlisted';
+}
+
 export class CreateProfileDto {
   @IsString()
   @IsNotEmpty()
@@ -165,4 +217,14 @@ export class CreateProfileDto {
   @ValidateNested()
   @Type(() => ProfileSampleTextsDto)
   sampleTexts?: ProfileSampleTextsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => VideoGenerationConfigDto)
+  generation?: VideoGenerationConfigDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => YoutubeProfileConfigDto)
+  youtube?: YoutubeProfileConfigDto;
 }

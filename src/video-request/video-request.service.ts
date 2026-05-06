@@ -29,6 +29,7 @@ import { VIDEO_GENERATION_JOB, VIDEO_GENERATION_QUEUE } from './video-request.qu
 import { RequestFsService } from '../video/request-fs.service';
 import { R2Service } from '../media/r2.service';
 import { UserSegmentMediaItemDto } from './dto/user-segment-media-item.dto';
+import { ProfileService } from '../profile/profile.service';
 
 @Injectable()
 export class VideoRequestService {
@@ -40,6 +41,7 @@ export class VideoRequestService {
     private readonly youTubeService: YouTubeService,
     private readonly requestFsService: RequestFsService,
     private readonly r2Service: R2Service,
+    private readonly profileService: ProfileService,
     @InjectQueue(VIDEO_GENERATION_QUEUE)
     private readonly videoGenerationQueue: Queue,
   ) {}
@@ -292,8 +294,28 @@ export class VideoRequestService {
       model,
     );
 
-    const youtubeUploadMode = dto.youtubeUploadMode || 'none';
-    if (youtubeUploadMode !== 'none' && !dto.connectionId) {
+    let youtubeUploadMode: 'none' | 'pending_approval' | 'direct' = 'none';
+    let connectionId: string | null = null;
+    let youtubePrivacyStatus: 'public' | 'private' | 'unlisted' = 'private';
+
+    if (dto.youtubeUploadMode) {
+      youtubeUploadMode = dto.youtubeUploadMode;
+      connectionId = dto.connectionId || null;
+      youtubePrivacyStatus = dto.youtubePrivacyStatus || 'private';
+    } else if (dto.profileId) {
+      // Resolve YouTube config from profile
+      try {
+        const profile = await this.profileService.getProfile(dto.profileId);
+        if (profile.youtube) {
+          youtubeUploadMode = profile.youtube.uploadMode;
+          connectionId = profile.youtube.connectionId || null;
+          youtubePrivacyStatus = profile.youtube.privacyStatus || 'private';
+        }
+      } catch {
+        // Profile not found — use defaults
+      }
+    }
+    if (youtubeUploadMode !== 'none' && !connectionId) {
       throw new BadRequestException(
         'connectionId is required when youtubeUploadMode is pending_approval or direct',
       );
@@ -313,12 +335,22 @@ export class VideoRequestService {
       status: 'pending',
       submittedAt: new Date(),
       youtubeUploadMode,
-      connectionId: dto.connectionId || null,
+      connectionId,
       youtubeTitle: dto.youtubeTitle || null,
       youtubeDescription: dto.youtubeDescription || null,
       youtubeTags: dto.youtubeTags || null,
-      youtubePrivacyStatus: dto.youtubePrivacyStatus || 'private',
+      youtubePrivacyStatus,
       userSegmentMedia,
+      motionConfig: dto.motionConfig
+        ? {
+            width: dto.motionConfig.width,
+            height: dto.motionConfig.height,
+            fps: dto.motionConfig.fps,
+            ...(dto.motionConfig.visualStylePrompt?.trim()
+              ? { visualStylePrompt: dto.motionConfig.visualStylePrompt.trim() }
+              : {}),
+          }
+        : null,
     });
     const saved = await this.videoRequestRepository.save(request);
     await this.enqueueGenerationJob(saved.id, {

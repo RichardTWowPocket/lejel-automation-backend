@@ -996,6 +996,18 @@ export class ScriptToVideoService {
 
     const profileId = request.profileId || 'default_longform';
     const profile: VideoProfile = await this.profileService.getProfile(profileId);
+
+    // Apply profile generation config as effective defaults (request values take priority)
+    const effectiveLlmModel = request.llmModel || profile.generation?.llmModel || 'gpt-5-4';
+    const effectiveImageModel = request.imageModel || profile.generation?.imageModel || 'z-image';
+    const effectiveVideoModel = request.videoModel || profile.generation?.videoModel || 'kling-v2.1';
+    const effectiveContentType = request.contentType || profile.generation?.contentType || 'mixed';
+
+    // Stash on request for downstream consumption
+    request.llmModel = request.llmModel || profile.generation?.llmModel || undefined;
+    request.imageModel = request.imageModel || profile.generation?.imageModel || undefined;
+    request.videoModel = request.videoModel || profile.generation?.videoModel || undefined;
+
     const canvasDim = resolveDimensions(
       profile.canvas.ratio as Ratio,
       profile.canvas.resolution as Resolution,
@@ -1046,7 +1058,7 @@ export class ScriptToVideoService {
       `Segment durations (gap-aware): ${timings.map((t) => t.duration.toFixed(2)).join(', ')}`,
     );
 
-    const contentType = request.contentType || 'mixed';
+    const contentType = effectiveContentType;
 
     // ─── Motion Graphic Mode ─────────────────────────────────────────────────
     if (contentType === 'motion_graphic') {
@@ -1128,8 +1140,8 @@ export class ScriptToVideoService {
       // - for images: the prompt attempt that actually succeeded
       // - for video: null when we fall back to placeholder (Kie generation failed)
       promptUsed: null as string | null,
-      imageModel: request.imageModel || 'z-image',
-      videoModel: request.videoModel || 'kling-v2.1',
+      imageModel: effectiveImageModel,
+      videoModel: effectiveVideoModel,
     }));
     this.requestFsService.writeJson(path.join(dirs.meta, 'media-plan.json'), mediaPlan);
 
@@ -1154,7 +1166,7 @@ export class ScriptToVideoService {
       (p) => p.mediaType === 'video' && !skipUserPromptSegments.has(p.index),
     );
     if (hasVideoSegments) {
-      const selectedVideoModel = request.videoModel || 'kling-v2.1';
+      const selectedVideoModel = effectiveVideoModel;
       validateKieMarketVideoModelForProfile(
         selectedVideoModel,
         kieProfileContent,
@@ -1166,7 +1178,10 @@ export class ScriptToVideoService {
       (p) => p.mediaType === 'image' && !skipUserPromptSegments.has(p.index),
     );
     if (hasImageSegments) {
-      validateKieMarketImageModelForProfile(request.imageModel, kieProfileContent);
+      validateKieMarketImageModelForProfile(
+        effectiveImageModel,
+        kieProfileContent,
+      );
     }
 
     const segmentVideoPaths: string[] = [];
