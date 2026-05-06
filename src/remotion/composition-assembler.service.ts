@@ -250,11 +250,26 @@ export class CompositionAssembler {
       .replace(/^```(?:tsx|typescript|ts|jsx|js)?\s*/i, '')
       .replace(/\s*```$/, '');
     cleaned = cleaned.trim();
+
     if (!cleaned.includes('export const Scene')) {
       const match = cleaned.match(/export const Scene\d+Visual[\s\S]*/);
-      if (match) return match[0].trim();
-      return '';
+      if (match) {
+        cleaned = match[0].trim();
+      } else {
+        return '';
+      }
     }
+
+    // Trim trailing content after the component's closing }; to avoid stray code
+    const closingIdx = cleaned.lastIndexOf('\n};');
+    if (closingIdx !== -1) {
+      const candidate = cleaned.substring(0, closingIdx + 3);
+      // Only trim if the closing }; looks like it ends the component
+      if (!cleaned.substring(closingIdx + 3).trim().startsWith('export')) {
+        cleaned = candidate;
+      }
+    }
+
     return cleaned;
   }
 
