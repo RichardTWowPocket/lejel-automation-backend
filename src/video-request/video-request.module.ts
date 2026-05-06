@@ -11,6 +11,7 @@ import { VideoRequestService } from './video-request.service';
 import { VideoGenerationProcessor } from './video-generation.processor';
 import { VIDEO_GENERATION_QUEUE } from './video-request.queue';
 import { AutomationModule } from '../automation/automation.module';
+import { ProfileModule } from '../profile/profile.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([VideoRequest]),
@@ -19,6 +20,7 @@ import { AutomationModule } from '../automation/automation.module';
     OAuthModule,
     LlmModule,
     VideoModule,
+    ProfileModule,
     forwardRef(() => AutomationModule),
   ],
   controllers: [VideoRequestController],
