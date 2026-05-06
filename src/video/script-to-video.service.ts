@@ -994,56 +994,70 @@ export class ScriptToVideoService {
     const timingMetaPath = path.join(dirs.meta, 'segment-timing.json');
     this.requestFsService.writeJson(timingMetaPath, timings);
 
-    const profileId = request.profileId || 'default_longform';
-    const profile: VideoProfile = await this.profileService.getProfile(profileId);
+    let effectiveContentType: string = request.contentType || 'mixed';
+    const isMotionGraphic = effectiveContentType === 'motion_graphic';
 
-    // Apply profile generation config as effective defaults (request values take priority)
-    const effectiveLlmModel = request.llmModel || profile.generation?.llmModel || 'gpt-5-4';
-    const effectiveImageModel = request.imageModel || profile.generation?.imageModel || 'z-image';
-    const effectiveVideoModel = request.videoModel || profile.generation?.videoModel || 'kling-v2.1';
-    const effectiveContentType = request.contentType || profile.generation?.contentType || 'mixed';
-
-    // Stash on request for downstream consumption
-    request.llmModel = request.llmModel || profile.generation?.llmModel || undefined;
-    request.imageModel = request.imageModel || profile.generation?.imageModel || undefined;
-    request.videoModel = request.videoModel || profile.generation?.videoModel || undefined;
-
-    const canvasDim = resolveDimensions(
-      profile.canvas.ratio as Ratio,
-      profile.canvas.resolution as Resolution,
-    );
-    const contentDim = resolveDimensions(
-      profile.content.ratio as Ratio,
-      profile.content.resolution as Resolution,
-    );
-    const contentX = Math.round(
-      (canvasDim.width - contentDim.width) / 2 + (Number(profile.content.xOffset) || 0),
-    );
-    const contentY = Math.round(
-      (canvasDim.height - contentDim.height) / 2 + (Number(profile.content.yOffset) || 0),
-    );
-    const segmentContentVf = [
-      `scale=${contentDim.width}:${contentDim.height}:force_original_aspect_ratio=decrease`,
-      `pad=${contentDim.width}:${contentDim.height}:(ow-iw)/2:(oh-ih)/2`,
-      `pad=${canvasDim.width}:${canvasDim.height}:${contentX}:${contentY}:color=black`,
-      'format=yuv420p',
-    ].join(',');
-    this.logger.log(
-      `Canvas: ${canvasDim.width}x${canvasDim.height}, Content: ${contentDim.width}x${contentDim.height} @ (${contentX},${contentY})`,
-    );
-
+    let effectiveLlmModel = request.llmModel || 'gpt-5-4';
+    let effectiveImageModel = request.imageModel || 'z-image';
+    let effectiveVideoModel = request.videoModel || 'kling-v2.1';
+    let profile: VideoProfile | null = null;
+    let segmentContentVf = '';
+    let canvasDim = { width: 1080, height: 1920 };
     let subtitleFile: string | undefined;
-    if (profile.subtitle.enabled) {
-      if (profile.subtitle.socialMediaStyle) {
-        subtitleFile = path.join(dirs.subtitles, 'subtitles.ass');
-        fs.writeFileSync(
-          subtitleFile,
-          this.createSocialAssFromWords(words, profile.subtitle, canvasDim.width, canvasDim.height),
-          'utf-8',
-        );
-      } else {
-        subtitleFile = path.join(dirs.subtitles, 'subtitles.srt');
-        fs.writeFileSync(subtitleFile, this.createSrt(timings), 'utf-8');
+
+    // Profiles are only needed for ffmpeg mode (canvas/subtitle/headline config)
+    if (!isMotionGraphic) {
+      const profileId = request.profileId || 'default_longform';
+      profile = await this.profileService.getProfile(profileId);
+
+      effectiveLlmModel = request.llmModel || profile.generation?.llmModel || 'gpt-5-4';
+      effectiveImageModel = request.imageModel || profile.generation?.imageModel || 'z-image';
+      effectiveVideoModel = request.videoModel || profile.generation?.videoModel || 'kling-v2.1';
+      // effectiveContentType may be resolved from profile
+      if (!request.contentType && profile.generation?.contentType) {
+        effectiveContentType = profile.generation.contentType;
+      }
+
+      request.llmModel = request.llmModel || profile.generation?.llmModel || undefined;
+      request.imageModel = request.imageModel || profile.generation?.imageModel || undefined;
+      request.videoModel = request.videoModel || profile.generation?.videoModel || undefined;
+
+      canvasDim = resolveDimensions(
+        profile.canvas.ratio as Ratio,
+        profile.canvas.resolution as Resolution,
+      );
+      const contentDim = resolveDimensions(
+        profile.content.ratio as Ratio,
+        profile.content.resolution as Resolution,
+      );
+      const contentX = Math.round(
+        (canvasDim.width - contentDim.width) / 2 + (Number(profile.content.xOffset) || 0),
+      );
+      const contentY = Math.round(
+        (canvasDim.height - contentDim.height) / 2 + (Number(profile.content.yOffset) || 0),
+      );
+      segmentContentVf = [
+        `scale=${contentDim.width}:${contentDim.height}:force_original_aspect_ratio=decrease`,
+        `pad=${contentDim.width}:${contentDim.height}:(ow-iw)/2:(oh-ih)/2`,
+        `pad=${canvasDim.width}:${canvasDim.height}:${contentX}:${contentY}:color=black`,
+        'format=yuv420p',
+      ].join(',');
+      this.logger.log(
+        `Canvas: ${canvasDim.width}x${canvasDim.height}, Content: ${contentDim.width}x${contentDim.height} @ (${contentX},${contentY})`,
+      );
+
+      if (profile.subtitle.enabled) {
+        if (profile.subtitle.socialMediaStyle) {
+          subtitleFile = path.join(dirs.subtitles, 'subtitles.ass');
+          fs.writeFileSync(
+            subtitleFile,
+            this.createSocialAssFromWords(words, profile.subtitle, canvasDim.width, canvasDim.height),
+            'utf-8',
+          );
+        } else {
+          subtitleFile = path.join(dirs.subtitles, 'subtitles.srt');
+          fs.writeFileSync(subtitleFile, this.createSrt(timings), 'utf-8');
+        }
       }
     }
 
@@ -1118,6 +1132,8 @@ export class ScriptToVideoService {
     }
 
     // ─── Traditional Mode (image/video per segment) ──────────────────────────
+    // Profile is guaranteed to be loaded (isMotionGraphic === false)
+    const pf = profile!;
     const mediaTypePerSegment: Array<'image' | 'video'> = [];
     if (contentType === 'all_image') {
       for (let i = 0; i < timings.length; i += 1) mediaTypePerSegment.push('image');

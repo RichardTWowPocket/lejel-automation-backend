@@ -1,6 +1,6 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { RemotionService } from './remotion.service';
-import { validateTsx, formatValidationErrors } from './remotion-validator';
+import { validateTsx, formatValidationErrors, hasCriticalErrors } from './remotion-validator';
 import type { CompositionPromptInput } from './composition-prompt.builder';
 import type { SupportedLlmModel } from '../llm/llm.service';
 
@@ -63,8 +63,13 @@ export class CompositionAssembler {
       totalFrames,
     );
 
-    // Step 5: Final validation
+    // Step 5: Final validation — reject on critical errors
     const errors = validateTsx(assembled);
+    if (hasCriticalErrors(errors)) {
+      const msg = `Final assembly has critical validation errors: ${formatValidationErrors(errors)}`;
+      this.logger.error(`[CompositionAssembler] ${msg}`);
+      throw new InternalServerErrorException(msg);
+    }
     if (errors.length > 0) {
       this.logger.warn(
         `[CompositionAssembler] Final validation warnings: ${formatValidationErrors(errors)}`,

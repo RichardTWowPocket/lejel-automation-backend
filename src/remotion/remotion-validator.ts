@@ -31,67 +31,103 @@ const IMPLICIT_CLOSE_TAGS = new Set([
 function checkBraceBalance(code: string): string[] {
   const errors: string[] = [];
   const stack: Array<{ char: string; line: number }> = [];
-  const lines = code.split('\n');
   let inString: string | null = null;
-  let inTemplate = false;
   let inComment = false;
   let inLineComment = false;
 
+  // Template literals: the skeleton uses `translateY(${groupY}px)`
+  // templateOpen    — current depth of backtick-quoted template literals (0 = not in one)
+  // interpCount     — number of unclosed ${ inside the current template
+  let templateOpen = 0;
+  let interpCount = 0;
+
   for (let i = 0; i < code.length; i++) {
     const ch = code[i];
-
-    // Track line number
     const line = code.slice(0, i).split('\n').length;
 
-    if (inLineComment && ch === '\n') {
-      inLineComment = false;
+    // ── Line comments ──────────────────────────────────────────────
+    if (inLineComment) {
+      if (ch === '\n') inLineComment = false;
       continue;
     }
-    if (inLineComment) continue;
 
+    // ── Block comments ─────────────────────────────────────────────
     if (inComment) {
-      if (ch === '*' && code[i + 1] === '/') {
-        inComment = false;
-        i++;
-      }
+      if (ch === '*' && code[i + 1] === '/') { inComment = false; i++; }
       continue;
     }
 
-    if (ch === '/' && code[i + 1] === '/') {
-      inLineComment = true;
-      i++;
-      continue;
-    }
-    if (ch === '/' && code[i + 1] === '*') {
-      inComment = true;
-      i++;
-      continue;
+    // ── Comment openers (normal code only) ─────────────────────────
+    if (templateOpen === 0 && !inString) {
+      if (ch === '/' && code[i + 1] === '/') { inLineComment = true; i++; continue; }
+      if (ch === '/' && code[i + 1] === '*') { inComment = true; i++; continue; }
     }
 
-    // Template literal
+    // ── Template literal ───────────────────────────────────────────
     if (!inString && ch === '`') {
-      inTemplate = !inTemplate;
-      continue;
-    }
-    if (inTemplate) {
-      if (ch === '\\') { i++; continue; }
-      if (ch === '$' && code[i + 1] === '{') {
-        stack.push({ char: '{', line });
-        i++;
-        continue;
-      }
-      if (ch === '}') {
-        if (stack.length === 0) {
-          errors.push(`extra } at line ${line}`);
-        } else {
-          stack.pop();
-        }
-        continue;
+      if (templateOpen === 0) {
+        templateOpen = 1;
+        interpCount = 0;
+      } else {
+        templateOpen = 0;
+        interpCount = 0;
       }
       continue;
     }
 
-    // String literals
+    if (templateOpen > 0) {
+      // Escape inside template
+      if (ch === '\\') { i++; continue; }
+
+      // Template interpolation opener: ${
+      if (ch === '$' && code[i + 1] === '{') {
+        interpCount++;
+        stack.push({ char: '{', line });
+        i++; // skip {
+        continue;
+      }
+
+      // } inside template — only meaningful inside ${...}
+      if (ch === '}') {
+        if (interpCount > 0) {
+          // Pop the matching brace (could be ${ marker or a JS { inside ${})
+          if (stack.length > 0) stack.pop();
+          interpCount--;
+        }
+        // else: literal } in template text — ignore
+        continue;
+      }
+
+      // Inside ${...} code: track regular braces normally
+      if (interpCount > 0) {
+        // String literals inside ${...}
+        if (!inString && (ch === '"' || ch === "'")) { inString = ch; continue; }
+        if (inString === ch && code[i - 1] !== '\\') { inString = null; continue; }
+        if (inString && ch === '\\') { i++; continue; }
+        if (inString) continue;
+
+        if (ch === '{' || ch === '(' || ch === '[') {
+          stack.push({ char: ch, line });
+        } else if (ch === ')') {
+          if (stack.length === 0 || stack[stack.length - 1].char !== '(') {
+            errors.push(`unmatched ) inside template at line ${line}`);
+          } else {
+            stack.pop();
+          }
+        } else if (ch === ']') {
+          if (stack.length === 0 || stack[stack.length - 1].char !== '[') {
+            errors.push(`unmatched ] inside template at line ${line}`);
+          } else {
+            stack.pop();
+          }
+        }
+        // { and } are handled above/below
+      }
+      // else: literal template text — everything else ignored
+      continue;
+    }
+
+    // ── String literals (outside template) ─────────────────────────
     if (!inString && (ch === '"' || ch === "'")) {
       inString = ch;
       continue;
@@ -100,12 +136,10 @@ function checkBraceBalance(code: string): string[] {
       if (code[i - 1] !== '\\') inString = null;
       continue;
     }
-    if (inString && ch === '\\') {
-      i++; continue;
-    }
+    if (inString && ch === '\\') { i++; continue; }
     if (inString) continue;
 
-    // Braces
+    // ── Regular braces ─────────────────────────────────────────────
     if (ch === '{' || ch === '(' || ch === '[') {
       stack.push({ char: ch, line });
     } else if (ch === '}') {
@@ -130,7 +164,7 @@ function checkBraceBalance(code: string): string[] {
   }
 
   if (inString) errors.push(`unclosed string literal`);
-  if (inTemplate) errors.push(`unclosed template literal`);
+  if (templateOpen) errors.push(`unclosed template literal`);
   if (inComment) errors.push(`unclosed block comment`);
   if (stack.length > 0) {
     errors.push(`${stack.length} unclosed bracket(s): ${stack.map((s) => s.char).join('')}`);
