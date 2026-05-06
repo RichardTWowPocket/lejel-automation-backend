@@ -367,7 +367,7 @@ export class RemotionService {
     * LLMs often omit imports; without them esbuild fails (undefined hooks/components).
     * If the file has no `from "remotion"` import, prepend a standard one.
     */
-  private ensureRemotionImports(tsx: string): string {
+  ensureRemotionImports(tsx: string): string {
     const t = tsx.trimStart();
     if (/from\s+['"]remotion['"]/.test(t)) {
       return tsx;
@@ -379,7 +379,7 @@ export class RemotionService {
   }
 
   /** Strip markdown fences and extract the TSX source code. */
-  private extractTsx(raw: string): string {
+  extractTsx(raw: string): string {
     let cleaned = raw.trim();
     // Strip ```tsx ... ``` or ``` ... ```
     cleaned = cleaned.replace(/^```(?:tsx|typescript|ts|jsx|js)?\s*/i, '').replace(/\s*```$/, '');

@@ -4,7 +4,6 @@ import * as path from 'path';
 import { ConfigService } from '@nestjs/config';
 import { VideoRequest } from '../entities/video-request.entity';
 import { RemotionService } from '../remotion/remotion.service';
-import { CompositionAssembler } from '../remotion/composition-assembler.service';
 import {
   CompositionPromptBuilder,
   CompositionPromptInput,
@@ -12,6 +11,10 @@ import {
 } from '../remotion/composition-prompt.builder';
 import { RequestFsService } from './request-fs.service';
 import { R2Service } from '../media/r2.service';
+import type { SupportedLlmModel } from '../llm/llm.service';
+
+const AGENT_MODEL: SupportedLlmModel = 'claude-sonnet-4-6';
+const MAX_RENDER_ATTEMPTS = 3;
 
 @Injectable()
 export class MotionGraphicPipelineService {
@@ -20,7 +23,6 @@ export class MotionGraphicPipelineService {
   constructor(
     private readonly configService: ConfigService,
     private readonly remotionService: RemotionService,
-    private readonly compositionAssembler: CompositionAssembler,
     private readonly requestFsService: RequestFsService,
     private readonly r2Service: R2Service,
   ) {}
@@ -99,36 +101,138 @@ export class MotionGraphicPipelineService {
 
     this.logger.log(`Generating motion graphic composition for request ${requestId} with ${segments.length} scenes`);
 
-    // Generate TSX via template-based assembler
-    const model = (request.llmModel as any) || 'claude-sonnet-4-6';
-    const assembled = await this.compositionAssembler.assemble(promptInput, model);
-    const tsxSource = assembled.tsxSource;
-
-    // Write TSX to disk for debugging
-    const metaDir = path.join(this.requestFsService.getRequestDir(requestId), 'meta');
-    fs.mkdirSync(metaDir, { recursive: true });
-    fs.writeFileSync(path.join(metaDir, 'composition.tsx'), tsxSource, 'utf-8');
-
-    this.logger.log(`Composition TSX generated (${tsxSource.length} chars), rendering...`);
-
-    // Render via Remotion render server
-    const renderResult = await this.remotionService.renderSource({
-      source: tsxSource,
-      durationInFrames: totalFrames,
+    // ── Agent loop: generate → render → fix → render ──────────────
+    const tsxSource = await this.generateCompositionAndRender(
+      promptInput,
+      audioPublicUrl,
+      requestId,
+      totalFrames,
       fps,
-      width: canvasWidth,
-      height: canvasHeight,
-      inputProps: {
-        audioUrl: audioPublicUrl,
-      },
-    });
+      canvasWidth,
+      canvasHeight,
+    );
 
-    this.logger.log(`Motion graphic rendered: ${renderResult.outputUrl}`);
+    this.logger.log(`Motion graphic rendered successfully for request ${requestId}`);
 
     return {
-      resultUrl: renderResult.outputUrl,
-      tsxSource,
+      resultUrl: tsxSource, // The last iteration set this to the output URL
+      tsxSource: fs.readFileSync(
+        path.join(this.requestFsService.getRequestDir(requestId), 'meta', 'composition.tsx'),
+        'utf-8',
+      ),
     };
+  }
+
+  /**
+   * Agent approach: generate full composition, render, feed render errors back to LLM, retry.
+   * Up to MAX_RENDER_ATTEMPTS render attempts. Uses claude-sonnet-4-6 exclusively.
+   */
+  private async generateCompositionAndRender(
+    promptInput: CompositionPromptInput,
+    audioPublicUrl: string,
+    requestId: string,
+    totalFrames: number,
+    fps: number,
+    width: number,
+    height: number,
+  ): Promise<string> {
+    const metaDir = path.join(this.requestFsService.getRequestDir(requestId), 'meta');
+    fs.mkdirSync(metaDir, { recursive: true });
+
+    // Step 1: Generate initial full composition (single mega-prompt call)
+    this.logger.log('[MotionAgent] Generating initial composition...');
+    let tsx = await this.remotionService.generateComposition(promptInput, AGENT_MODEL);
+    fs.writeFileSync(path.join(metaDir, 'composition-v0.tsx'), tsx, 'utf-8');
+    this.logger.log(`[MotionAgent] Initial composition: ${tsx.length} chars`);
+
+    // Step 2: Render → fix → render loop
+    for (let attempt = 0; attempt < MAX_RENDER_ATTEMPTS; attempt++) {
+      try {
+        this.logger.log(`[MotionAgent] Render attempt ${attempt + 1}/${MAX_RENDER_ATTEMPTS}...`);
+        const result = await this.remotionService.renderSource({
+          source: tsx,
+          durationInFrames: totalFrames,
+          fps,
+          width,
+          height,
+          inputProps: { audioUrl: audioPublicUrl },
+        });
+
+        // Success! Save final TSX and return
+        fs.writeFileSync(path.join(metaDir, 'composition.tsx'), tsx, 'utf-8');
+        this.logger.log(`[MotionAgent] Render succeeded on attempt ${attempt + 1}`);
+        return result.outputUrl;
+      } catch (err: any) {
+        const renderError = err.message || String(err);
+        this.logger.warn(
+          `[MotionAgent] Render attempt ${attempt + 1} failed: ${renderError.slice(0, 400)}`,
+        );
+
+        if (attempt >= MAX_RENDER_ATTEMPTS - 1) {
+          throw new InternalServerErrorException(
+            `Motion graphic render failed after ${MAX_RENDER_ATTEMPTS} attempts: ${renderError}`,
+          );
+        }
+
+        // Feed the real render error back to the LLM for revision
+        this.logger.log(`[MotionAgent] Asking LLM to fix render error...`);
+        try {
+          tsx = await this.reviseCompositionWithError(tsx, renderError, promptInput);
+          fs.writeFileSync(
+            path.join(metaDir, `composition-v${attempt + 1}.tsx`),
+            tsx,
+            'utf-8',
+          );
+          this.logger.log(`[MotionAgent] Revised composition: ${tsx.length} chars`);
+        } catch (llmErr: any) {
+          this.logger.error(`[MotionAgent] LLM revision failed: ${llmErr.message}`);
+          throw new InternalServerErrorException(
+            `LLM failed to revise TSX after render error: ${llmErr.message}`,
+          );
+        }
+      }
+    }
+
+    throw new InternalServerErrorException('Unexpected end of render loop');
+  }
+
+  /**
+   * Ask the LLM to fix a failed composition given the actual render error.
+   */
+  private async reviseCompositionWithError(
+    currentTsx: string,
+    renderError: string,
+    _promptInput: CompositionPromptInput,
+  ): Promise<string> {
+    const revisionPrompt = [
+      `The Remotion render server failed to compile this TSX. Fix ALL errors and output the complete corrected file.`,
+      ``,
+      `## RENDER ERROR`,
+      renderError,
+      ``,
+      `## RULES`,
+      `- Output ONLY the corrected TSX — no markdown, no explanations, no backticks.`,
+      `- The file must have: import from "remotion", a default export function wrapped in <AbsoluteFill>.`,
+      `- Use useCurrentFrame() + interpolate() or spring() for ALL animations — NO CSS @keyframes or Tailwind animate-* classes.`,
+      `- Keep the file under 220 lines. Close every JSX tag.`,
+      `- Fix the EXACT error shown above. Do not change the intended design unless necessary.`,
+      ``,
+      `## CURRENT TSX (with errors)`,
+      currentTsx,
+    ].join('\n');
+
+    const raw = await this.remotionService.callLlmForTsx(AGENT_MODEL, revisionPrompt);
+    const extracted = this.remotionService.extractTsx(raw);
+    if (!extracted) {
+      this.logger.warn(`[MotionAgent] extractTsx returned empty after revision`);
+      const fallback = raw
+        .replace(/^```(?:tsx|typescript|ts|jsx|js)?\s*/i, '')
+        .replace(/\s*```$/, '')
+        .trim();
+      return fallback || currentTsx;
+    }
+
+    return this.remotionService.ensureRemotionImports(extracted);
   }
 
   /**
